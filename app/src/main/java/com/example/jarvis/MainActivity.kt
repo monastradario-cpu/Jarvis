@@ -82,11 +82,12 @@ class MainActivity : Activity(), Cervello.Uscita {
     private val CODICE_CONTATTI = 2
     private val CODICE_MIC_SERVIZIO = 3
 
-    // Palette: nero, oro e bianco
-    private val COLORE_SFONDO = Color.parseColor("#050505")
-    private val COLORE_ORO = Color.parseColor("#D4A84B")
-    private val COLORE_BIANCO = Color.parseColor("#F5F5F5")
-    private val COLORE_TENUE = Color.parseColor("#8A8A8A")
+    // Colori del tema scelto in ASPETTO (predefinito: nero, oro e bianco)
+    private lateinit var tema: Tema.Palette
+    private val COLORE_SFONDO: Int get() = tema.sfondo
+    private val COLORE_ORO: Int get() = tema.accento
+    private val COLORE_BIANCO: Int get() = tema.testo
+    private val COLORE_TENUE: Int get() = tema.tenue
     private val MONO = Typeface.MONOSPACE
     private val SERIF = Typeface.create("serif", Typeface.NORMAL)
 
@@ -133,6 +134,9 @@ class MainActivity : Activity(), Cervello.Uscita {
         super.onCreate(savedInstanceState)
         cervello = Cervello.prendi(this)
         prefs = cervello.prefs
+        tema = Tema.attuale(prefs)
+        window.statusBarColor = tema.sfondo
+        window.navigationBarColor = tema.sfondo
         costruisciInterfaccia()
 
         tts = TextToSpeech(this) { esito ->
@@ -321,7 +325,10 @@ class MainActivity : Activity(), Cervello.Uscita {
             LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(1)).apply { topMargin = dp(2) })
 
         // Riga di dati: data, ora, batteria, plugin
-        infoHud = testoHud("", COLORE_TENUE, 9.5f, 0.12f).apply { gravity = Gravity.CENTER }
+        infoHud = testoHud("", COLORE_TENUE, 9.5f, 0.12f).apply {
+            gravity = Gravity.CENTER
+            visibility = if (prefs.getString("interfaccia", "hud") == "minimal") View.GONE else View.VISIBLE
+        }
         radice.addView(infoHud, LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
         ).apply { topMargin = dp(6) })
@@ -331,6 +338,9 @@ class MainActivity : Activity(), Cervello.Uscita {
             isClickable = true
             contentDescription = "Tocca per parlare, tieni premuto per il menu"
             ridotto = prefs.getString("animazioni", "piene") == "ridotte"
+            palette = tema
+            forma = prefs.getString("forma", "sfera") ?: "sfera"
+            interfaccia = prefs.getString("interfaccia", "hud") ?: "hud"
             setOnClickListener { if (inAscolto) fermaAscolto() else iniziaAscolto() }
             setOnLongClickListener { mostraImpostazioni(); true }
         }
@@ -381,8 +391,8 @@ class MainActivity : Activity(), Cervello.Uscita {
             setPadding(dp(16), 0, dp(6), 0)
             background = GradientDrawable().apply {
                 cornerRadius = dp(24).toFloat()
-                setStroke(dp(1), Color.argb(170, 212, 168, 75))
-                setColor(Color.parseColor("#0D0D0D"))
+                setStroke(dp(1), Tema.conAlfa(tema.accento, 170))
+                setColor(tema.superficie)
             }
         }
         campoTesto = EditText(this).apply {
@@ -545,7 +555,7 @@ class MainActivity : Activity(), Cervello.Uscita {
     private fun mostraImpostazioni() {
         if (menuRadiale != null) return
         val menu = MenuRadialeView(
-            this, VOCI_MENU,
+            this, VOCI_MENU, tema,
             alScegliere = { i ->
                 chiudiMenuRadiale()
                 when (i) {
@@ -848,19 +858,39 @@ class MainActivity : Activity(), Cervello.Uscita {
     // ---------- SEMPRE ATTIVO ----------
     private fun mostraSempreAttivo() {
         val pagina = Pagina("Sempre attivo")
-        pagina.nota("Jarvis resta acceso in background con una notifica fissa: di' \"Jarvis\" oppure tocca Parla " +
+        pagina.nota("Jarvis resta acceso in background con una notifica fissa: di' \"Ehi Jarvis\" oppure tocca Parla " +
             "nella notifica o la tessera Jarvis nel menu a tendina.")
         val parolaAttivazione = pagina.casella("Parola di attivazione \"Jarvis\" (offline)", prefs.getBoolean("parola_attivazione", true))
-        pagina.titoloSezione("Sensibilità della parola \"Jarvis\"")
-        pagina.nota("Di' \"Jarvis\" da solo, fai una piccola pausa e poi il comando.")
+        pagina.titoloSezione("Comando di attivazione")
+        val frase = pagina.scelta(
+            listOf(
+                "entrambi" to "Ehi Jarvis oppure Ciao Jarvis",
+                "ehi" to "Solo Ehi Jarvis",
+                "ciao" to "Solo Ciao Jarvis",
+                "jarvis" to "Solo Jarvis (si attiva più facilmente)"
+            ),
+            prefs.getString("frase_attivazione", "entrambi") ?: "entrambi"
+        )
+        pagina.nota("Di' il comando, fai una piccola pausa e poi la richiesta.")
+        pagina.titoloSezione("Sensibilità")
         val sensibilita = pagina.scelta(
             listOf(
-                "bassa" to "Bassa: solo \"Jarvis\" detto chiaro e da solo (consigliata con TV o gente intorno)",
+                "bassa" to "Bassa: solo se detto chiaro (consigliata con TV o gente intorno)",
                 "media" to "Media: equilibrata",
-                "alta" to "Alta: lo sente anche dentro una frase, ma sbaglia più spesso"
+                "alta" to "Alta: lo sente anche da lontano, ma sbaglia più spesso"
             ),
             prefs.getString("sensibilita", "media") ?: "media"
         )
+        pagina.titoloSezione("Risparmio batteria")
+        val risparmio = pagina.scelta(
+            listOf(
+                "massimo" to "Massimo: ascolta solo a schermo acceso (o in carica)",
+                "equilibrato" to "Equilibrato: sempre, ma si ferma sotto il 20% di batteria",
+                "prestazioni" to "Prestazioni: ascolta sempre"
+            ),
+            prefs.getString("risparmio", "equilibrato") ?: "equilibrato"
+        )
+        pagina.nota("In ogni caso Jarvis analizza l'audio solo quando qualcuno parla: in silenzio consuma pochissimo.")
         pagina.bottone(if (ServizioJarvis.attivo) "Spegni la modalità sempre attiva" else "Accendi la modalità sempre attiva") {
             if (ServizioJarvis.attivo) spegniSempreAttivo() else accendiSempreAttivo()
         }
@@ -889,6 +919,8 @@ class MainActivity : Activity(), Cervello.Uscita {
             prefs.edit()
                 .putBoolean("parola_attivazione", parolaAttivazione.isChecked)
                 .putString("sensibilita", sensibilita())
+                .putString("frase_attivazione", frase())
+                .putString("risparmio", risparmio())
                 .apply()
             if (cambiata && ServizioJarvis.attivo) {
                 stopService(Intent(this, ServizioJarvis::class.java))
@@ -958,6 +990,12 @@ class MainActivity : Activity(), Cervello.Uscita {
     // ---------- ASPETTO ----------
     private fun mostraAspetto() {
         val pagina = Pagina("Aspetto")
+        pagina.titoloSezione("Colori")
+        val colori = pagina.scelta(Tema.PALETTE.map { it.id to it.nome }, tema.id)
+        pagina.titoloSezione("Interfaccia")
+        val interfaccia = pagina.scelta(Tema.INTERFACCE, prefs.getString("interfaccia", "hud") ?: "hud")
+        pagina.titoloSezione("Cuore animato")
+        val forma = pagina.scelta(Tema.FORME, prefs.getString("forma", "sfera") ?: "sfera")
         pagina.titoloSezione("Conversazione")
         val modo = pagina.scelta(
             listOf(
@@ -975,9 +1013,21 @@ class MainActivity : Activity(), Cervello.Uscita {
             prefs.getString("animazioni", "piene") ?: "piene"
         )
         pagina.mostra {
-            prefs.edit().putString("conversazione", modo()).putString("animazioni", animazioni()).apply()
-            reattore.ridotto = animazioni() == "ridotte"
-            ridisegnaConversazione()
+            val cambiaTutto = colori() != tema.id || interfaccia() != prefs.getString("interfaccia", "hud")
+            prefs.edit()
+                .putString("conversazione", modo())
+                .putString("animazioni", animazioni())
+                .putString("tema", colori())
+                .putString("interfaccia", interfaccia())
+                .putString("forma", forma())
+                .apply()
+            if (cambiaTutto) {
+                recreate()      // ricostruisce la schermata con i nuovi colori
+            } else {
+                reattore.ridotto = animazioni() == "ridotte"
+                reattore.forma = forma()
+                ridisegnaConversazione()
+            }
         }
     }
 
@@ -1234,7 +1284,7 @@ class MainActivity : Activity(), Cervello.Uscita {
         ServizioJarvis.invia(this, ServizioJarvis.AZIONE_PAUSA)
         aggiungiAlRegistro(
             "Jarvis",
-            "Modalità sempre attiva accesa. Quando chiudi questa schermata, di' \"Jarvis\" per chiamarmi. " +
+            "Modalità sempre attiva accesa. Quando chiudi questa schermata, di' \"Ehi Jarvis\" o \"Ciao Jarvis\" per chiamarmi. " +
                 "Per non farmi chiudere dal telefono, attiva anche \"Batteria senza limiti\" e \"Avvio automatico\" nelle impostazioni."
         )
     }

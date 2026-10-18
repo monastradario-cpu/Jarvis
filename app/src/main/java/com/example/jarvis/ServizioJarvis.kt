@@ -5,10 +5,16 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.IntentFilter
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.graphics.drawable.Icon
+import android.media.AudioFormat
+import android.media.AudioRecord
+import android.media.MediaRecorder
+import android.os.BatteryManager
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -22,7 +28,6 @@ import android.speech.tts.UtteranceProgressListener
 import org.json.JSONObject
 import org.vosk.Model
 import org.vosk.Recognizer
-import org.vosk.android.SpeechService
 import org.vosk.android.StorageService
 import java.util.Locale
 
@@ -79,7 +84,8 @@ class ServizioJarvis : Service() {
     private val principale = Handler(Looper.getMainLooper())
 
     private var modello: Model? = null
-    private var ascoltoParola: SpeechService? = null
+    @Volatile private var ascoltando = false
+    private var filoAscolto: Thread? = null
     private var riconoscitore: SpeechRecognizer? = null
     private var tts: TextToSpeech? = null
 
@@ -116,6 +122,7 @@ class ServizioJarvis : Service() {
                 return START_NOT_STICKY
             }
             inPausa = MainActivity.visibile
+            registraStatoTelefono()
             caricaModello()
         }
 
@@ -157,7 +164,8 @@ class ServizioJarvis : Service() {
     override fun onDestroy() {
         attivo = false
         principale.removeCallbacksAndMessages(null)
-        try { ascoltoParola?.shutdown() } catch (e: Exception) { }
+        fermaParola()
+        try { unregisterReceiver(ricevitoreStato) } catch (e: Exception) { }
         try { riconoscitore?.destroy() } catch (e: Exception) { }
         try { tts?.shutdown() } catch (e: Exception) { }
         try { modello?.close() } catch (e: Exception) { }
@@ -165,10 +173,20 @@ class ServizioJarvis : Service() {
     }
 
     // ================================================================
-    //  PAROLA DI ATTIVAZIONE (Vosk, offline)
+    //  PAROLA DI ATTIVAZIONE (Vosk, offline, a basso consumo)
     // ================================================================
 
     private fun parolaAttiva() = cervello.prefs.getBoolean("parola_attivazione", true)
+
+    /** Il comando scelto nel menu: "ehi" (Ehi Jarvis), "ciao" (Ciao Jarvis), "entrambi" oppure "jarvis". */
+    private fun frase() = cervello.prefs.getString("frase_attivazione", "entrambi") ?: "entrambi"
+
+    private fun nomeFrase() = when (frase()) {
+        "ehi" -> "Ehi Jarvis"
+        "ciao" -> "Ciao Jarvis"
+        "jarvis" -> "Jarvis"
+        else -> "Ehi Jarvis o Ciao Jarvis"
+    }
 
     private fun caricaModello() {
         if (!parolaAttiva()) {
@@ -187,6 +205,62 @@ class ServizioJarvis : Service() {
         )
     }
 
+    // ---------- risparmio batteria: schermo e livello della batteria ----------
+
+    private var schermoAcceso = true
+    private var livelloBatteria = 100
+    private var inCarica = false
+
+    private val ricevitoreStato = object : BroadcastReceiver() {
+        override fun onReceive(c: Context, i: Intent) {
+            when (i.action) {
+                Intent.ACTION_SCREEN_ON -> schermoAcceso = true
+                Intent.ACTION_SCREEN_OFF -> schermoAcceso = false
+                Intent.ACTION_BATTERY_CHANGED -> {
+                    val livello = i.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
+                    val scala = i.getIntExtra(BatteryManager.EXTRA_SCALE, 100)
+                    if (livello >= 0 && scala > 0) livelloBatteria = livello * 100 / scala
+                    inCarica = i.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0) != 0
+                }
+            }
+            if (!occupato) {
+                if (deveAscoltare()) riprendiAttesa() else {
+                    fermaParola()
+                    aggiornaNotifica(motivoPausa())
+                }
+            }
+        }
+    }
+
+    private fun registraStatoTelefono() {
+        val filtro = IntentFilter().apply {
+            addAction(Intent.ACTION_SCREEN_ON)
+            addAction(Intent.ACTION_SCREEN_OFF)
+            addAction(Intent.ACTION_BATTERY_CHANGED)
+        }
+        try {
+            if (Build.VERSION.SDK_INT >= 33) registerReceiver(ricevitoreStato, filtro, Context.RECEIVER_NOT_EXPORTED)
+            else registerReceiver(ricevitoreStato, filtro)
+        } catch (e: Exception) {
+            // si ascolta sempre
+        }
+    }
+
+    /**
+     * Modalità di risparmio:
+     * - massimo: ascolta solo con lo schermo acceso
+     * - equilibrato: ascolta sempre, ma si ferma sotto il 20% di batteria (se non è in carica)
+     * - prestazioni: ascolta sempre
+     */
+    private fun deveAscoltare(): Boolean = when (cervello.prefs.getString("risparmio", "equilibrato")) {
+        "massimo" -> schermoAcceso || inCarica
+        "prestazioni" -> true
+        else -> inCarica || livelloBatteria > 20
+    }
+
+    private fun motivoPausa() = if (!schermoAcceso) "In pausa a schermo spento: tocca Parla"
+    else "In pausa per batteria scarica: tocca Parla"
+
     private var ultimaRipresa = 0L     // per ignorare l'eco subito dopo che Jarvis ha parlato
 
     private fun riprendiAttesa() {
@@ -202,64 +276,140 @@ class ServizioJarvis : Service() {
             aggiornaNotifica("Tocca Parla per darmi un comando")
             return
         }
-        try {
-            if (ascoltoParola == null) {
-                // Vocabolario completo (non solo "jarvis"): le altre parole non vengono scambiate per il nome.
-                // Con setWords ogni parola riconosciuta ha anche il suo grado di sicurezza.
-                val riconoscitoreParola = Recognizer(m, 16000f).apply { setWords(true) }
-                ascoltoParola = SpeechService(riconoscitoreParola, 16000f)
+        if (!deveAscoltare()) {
+            fermaParola()
+            aggiornaNotifica(motivoPausa())
+            return
+        }
+        avviaAscoltoParola(m)
+        aggiornaNotifica("Di' \"${nomeFrase()}\" per chiamarmi")
+    }
+
+    /**
+     * Ascolto a basso consumo: legge il microfono a blocchi di 100 ms e misura solo il volume.
+     * Il riconoscitore lavora soltanto quando qualcuno parla (più un attimo prima e dopo):
+     * in silenzio il telefono quasi non consuma.
+     */
+    private fun avviaAscoltoParola(m: Model) {
+        if (ascoltando) return
+        ascoltando = true
+        filoAscolto = Thread {
+            // Solo le frasi di attivazione: le altre parole diventano [unk] e non attivano niente.
+            val grammatica = "[\"hey jarvis\", \"hi jarvis\", \"okay jarvis\", \"ciao jarvis\", \"chow jarvis\", \"jarvis\", \"[unk]\"]"
+            val riconoscitoreParola = try {
+                Recognizer(m, 16000f, grammatica).apply { setWords(true) }
+            } catch (e: Exception) {
+                ascoltando = false
+                principale.post { aggiornaNotifica("Parola di attivazione non disponibile: tocca Parla") }
+                return@Thread
             }
-            ascoltoParola?.startListening(ascoltatoreParola)
-            aggiornaNotifica("Di' \"Jarvis\" per chiamarmi")
-        } catch (e: Exception) {
-            aggiornaNotifica("Microfono occupato: tocca Parla")
+            val minimo = AudioRecord.getMinBufferSize(16000, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
+            val registratore = try {
+                AudioRecord(
+                    MediaRecorder.AudioSource.VOICE_RECOGNITION, 16000,
+                    AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, maxOf(minimo, 6400) * 2
+                )
+            } catch (e: SecurityException) {
+                null
+            }
+            if (registratore == null || registratore.state != AudioRecord.STATE_INITIALIZED) {
+                ascoltando = false
+                registratore?.release()
+                riconoscitoreParola.close()
+                principale.post { aggiornaNotifica("Microfono occupato: tocca Parla") }
+                return@Thread
+            }
+            registratore.startRecording()
+
+            val blocco = ShortArray(1600)                 // 100 ms
+            val prima = ArrayDeque<ShortArray>()          // gli ultimi 300 ms, per non perdere l'inizio della parola
+            var rumoreDiFondo = 300.0
+            var ultimoParlato = 0L
+            var inAnalisi = false
+
+            while (ascoltando) {
+                val letti = registratore.read(blocco, 0, blocco.size)
+                if (letti <= 0) continue
+                var somma = 0.0
+                for (i in 0 until letti) somma += blocco[i].toDouble() * blocco[i]
+                val volume = Math.sqrt(somma / letti)
+                // il rumore di fondo si adatta lentamente all'ambiente
+                if (volume < rumoreDiFondo * 1.5) rumoreDiFondo = (rumoreDiFondo * 0.97 + volume * 0.03).coerceAtLeast(120.0)
+                val ora = System.currentTimeMillis()
+                if (volume > maxOf(350.0, rumoreDiFondo * 2.4)) ultimoParlato = ora
+
+                if (ora - ultimoParlato < 1200) {
+                    if (!inAnalisi) {
+                        inAnalisi = true
+                        for (b in prima) riconoscitoreParola.acceptWaveForm(b, b.size)
+                        prima.clear()
+                    }
+                    if (riconoscitoreParola.acceptWaveForm(blocco, letti)) controlla(riconoscitoreParola.result)
+                } else {
+                    if (inAnalisi) {
+                        inAnalisi = false
+                        controlla(riconoscitoreParola.finalResult)
+                        riconoscitoreParola.reset()
+                    }
+                    prima.addLast(blocco.copyOf(letti))
+                    if (prima.size > 3) prima.removeFirst()
+                }
+            }
+            try { registratore.stop() } catch (e: Exception) { }
+            registratore.release()
+            riconoscitoreParola.close()
+        }.apply {
+            name = "jarvis-ascolto"
+            start()
         }
     }
 
     private fun fermaParola() {
-        try { ascoltoParola?.stop() } catch (e: Exception) { }
-    }
-
-    private val ascoltatoreParola = object : org.vosk.android.RecognitionListener {
-        override fun onPartialResult(hypothesis: String?) {}   // i parziali sono troppo imprecisi
-        override fun onResult(hypothesis: String?) = controlla(hypothesis)
-        override fun onFinalResult(hypothesis: String?) {}
-        override fun onError(exception: Exception?) {
-            aggiornaNotifica("Errore del microfono: tocca Parla")
-        }
-        override fun onTimeout() {}
+        ascoltando = false
+        val filo = filoAscolto
+        filoAscolto = null
+        try {
+            if (filo != null && filo != Thread.currentThread()) filo.join(600)
+        } catch (e: Exception) { }
     }
 
     /**
-     * Decide se la frase appena finita era davvero "Jarvis".
-     * Sensibilità:
-     * - bassa: "Jarvis" quasi da solo (massimo 2 parole) e riconosciuto con sicurezza altissima
-     * - media: massimo 4 parole e sicurezza alta (predefinita)
-     * - alta:  anche dentro una frase, sicurezza discreta
+     * Decide se la frase appena finita era davvero il comando di attivazione.
+     * - "Ehi Jarvis" / "Ciao Jarvis": il nome deve essere preceduto dal saluto giusto
+     * - sensibilità bassa, media o alta: quanto deve essere sicuro il riconoscimento
      */
     private fun controlla(json: String?) {
         if (occupato || json == null) return
         if (System.currentTimeMillis() - ultimaRipresa < 2500) return
         val risultato = try { JSONObject(json) } catch (e: Exception) { return }
-        val testo = risultato.optString("text").trim()
-        if (!testo.contains("jarvis")) return
-        val parole = testo.split(Regex("\\s+")).filter { it.isNotBlank() && it != "the" && it != "hey" && it != "a" }
-        val elenco = risultato.optJSONArray("result")
+        val parole = risultato.optString("text").trim().split(Regex("\\s+")).filter { it.isNotBlank() }
+        val posizione = parole.indexOf("jarvis")
+        if (posizione < 0) return
+        val saluto = parole.getOrNull(posizione - 1)
+        val salutiEhi = setOf("hey", "hi", "okay")
+        val salutiCiao = setOf("ciao", "chow")
+        val salutoGiusto = when (frase()) {
+            "ehi" -> saluto in salutiEhi
+            "ciao" -> saluto in salutiCiao
+            "jarvis" -> true
+            else -> saluto in salutiEhi || saluto in salutiCiao
+        }
+        if (!salutoGiusto) return
+
         var sicurezza = 0.0
+        val elenco = risultato.optJSONArray("result")
         if (elenco != null) {
             for (i in 0 until elenco.length()) {
                 val p = elenco.optJSONObject(i) ?: continue
                 if (p.optString("word") == "jarvis") sicurezza = maxOf(sicurezza, p.optDouble("conf", 0.0))
             }
         }
-        val (sogliaSicurezza, massimoParole) = when (cervello.prefs.getString("sensibilita", "media")) {
-            "bassa" -> 0.93 to 2
-            "alta" -> 0.65 to 12
-            else -> 0.82 to 4
+        val soglia = when (cervello.prefs.getString("sensibilita", "media")) {
+            "bassa" -> 0.92
+            "alta" -> 0.6
+            else -> 0.8
         }
-        if (sicurezza >= sogliaSicurezza && parole.size <= massimoParole) {
-            principale.post { avviaComando() }
-        }
+        if (sicurezza >= soglia) principale.post { if (!occupato) avviaComando() }
     }
 
     // ================================================================

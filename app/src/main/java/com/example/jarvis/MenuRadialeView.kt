@@ -21,12 +21,13 @@ import kotlin.math.sin
 class MenuRadialeView(
     context: Context,
     private val voci: List<String>,
+    private val palette: Tema.Palette,
     private val alScegliere: (Int) -> Unit,
     private val alChiudere: () -> Unit
 ) : View(context) {
 
-    private val oro = Color.parseColor("#D4A84B")
-    private val bianco = Color.parseColor("#F5F5F5")
+    private val oro = palette.accento
+    private val bianco = palette.testo
     private val densita = resources.displayMetrics.density
 
     private val pennello = Paint(Paint.ANTI_ALIAS_FLAG)
@@ -70,7 +71,7 @@ class MenuRadialeView(
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
         // Velo scuro sopra la sfera
-        canvas.drawColor(Color.argb((215 * apertura).toInt(), 5, 5, 5))
+        canvas.drawColor(conAlfa(palette.sfondo, (215 * apertura).toInt()))
 
         // Cerchio guida su cui stanno le voci
         pennello.style = Paint.Style.STROKE
@@ -89,14 +90,14 @@ class MenuRadialeView(
             canvas.drawLine(cx(), cy(), x, y, pennello)
             // bottone
             pennello.style = Paint.Style.FILL
-            pennello.color = if (i == premuta) conAlfa(oro, 230) else conAlfa(Color.parseColor("#0D0D0D"), (255 * apertura).toInt())
+            pennello.color = if (i == premuta) conAlfa(oro, 230) else conAlfa(palette.superficie, (255 * apertura).toInt())
             canvas.drawCircle(x, y, rv, pennello)
             pennello.style = Paint.Style.STROKE
             pennello.strokeWidth = 1.3f * densita
             pennello.color = conAlfa(oro, (230 * apertura).toInt())
             canvas.drawCircle(x, y, rv, pennello)
             // etichetta
-            pennelloTesto.color = conAlfa(if (i == premuta) Color.parseColor("#050505") else bianco, (255 * apertura).toInt())
+            pennelloTesto.color = conAlfa(if (i == premuta) palette.sfondo else bianco, (255 * apertura).toInt())
             val altezza = pennelloTesto.descent() + pennelloTesto.ascent()
             canvas.drawText(voci[i], x, y - altezza / 2f, pennelloTesto)
         }
