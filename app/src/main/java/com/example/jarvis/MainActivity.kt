@@ -660,7 +660,7 @@ class MainActivity : Activity(), Cervello.Uscita {
     //  MENU RADIALE E SOTTOMENÙ
     // ================================================================
 
-    private val VOCI_MENU = listOf("CERVELLO", "CARATTERE", "VOCE", "PLUGIN", "ATTIVO", "MATTINO", "ASPETTO", "COLLEGA", "DATI")
+    private val VOCI_MENU = listOf("CERVELLO", "CARATTERE", "VOCE", "PLUGIN", "ATTIVO", "MATTINO", "ASPETTO", "COLLEGA", "DATI", "AGGIORNA")
     private var menuRadiale: MenuRadialeView? = null
 
     /** Apre il menu radiale attorno alla sfera. */
@@ -679,7 +679,8 @@ class MainActivity : Activity(), Cervello.Uscita {
                     5 -> mostraMattino()
                     6 -> mostraAspetto()
                     7 -> mostraCollegamenti()
-                    else -> mostraDati()
+                    8 -> mostraDati()
+                    else -> aggiornaOra()
                 }
             },
             alChiudere = { chiudiMenuRadiale() }
