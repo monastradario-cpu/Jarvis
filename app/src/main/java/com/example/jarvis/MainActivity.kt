@@ -22,6 +22,7 @@ import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.speech.tts.TextToSpeech
+import android.speech.tts.UtteranceProgressListener
 import android.text.InputType
 import android.text.SpannableString
 import android.text.Spanned
@@ -129,7 +130,8 @@ class MainActivity : Activity() {
     private lateinit var scorrimento: ScrollView
     private lateinit var stato: TextView
     private lateinit var campoTesto: EditText
-    private lateinit var bottoneMic: Button
+    private lateinit var reattore: ReattoreView
+    @Volatile private var parlando = false
 
     private var tts: TextToSpeech? = null
     private var riconoscitore: SpeechRecognizer? = null
@@ -161,6 +163,20 @@ class MainActivity : Activity() {
         tts = TextToSpeech(this) { esito ->
             if (esito == TextToSpeech.SUCCESS) {
                 tts?.setLanguage(Locale("it", "IT"))
+                tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+                    override fun onStart(utteranceId: String?) {
+                        runOnUiThread { parlando = true; aggiornaMic() }
+                    }
+
+                    override fun onDone(utteranceId: String?) {
+                        runOnUiThread { parlando = false; aggiornaMic() }
+                    }
+
+                    @Deprecated("Richiesto dalle versioni vecchie di Android")
+                    override fun onError(utteranceId: String?) {
+                        runOnUiThread { parlando = false; aggiornaMic() }
+                    }
+                })
             }
         }
 
@@ -211,7 +227,7 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER_VERTICAL
         }
         val titolo = TextView(this).apply {
-            text = "J.A.R.V.I.S."
+            text = "JARVIS"
             setTextColor(COLORE_ACCENTO)
             textSize = 24f
             typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
@@ -235,18 +251,25 @@ class MainActivity : Activity() {
         barra.addView(bottoneImpostazioni)
         radice.addView(barra)
 
+        // Il reattore animato: toccalo per parlare
+        reattore = ReattoreView(this).apply {
+            isClickable = true
+            contentDescription = "Tocca per parlare"
+            setOnClickListener { if (inAscolto) fermaAscolto() else iniziaAscolto() }
+        }
+        radice.addView(
+            reattore,
+            LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1.25f).apply { topMargin = dp(4) }
+        )
+
         // Conversazione
         registro = TextView(this).apply {
             setTextColor(COLORE_TESTO)
-            textSize = 16f
+            textSize = 15f
             setLineSpacing(0f, 1.2f)
             setTextIsSelectable(true)
         }
         scorrimento = ScrollView(this).apply { addView(registro) }
-        radice.addView(
-            scorrimento,
-            LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f).apply { topMargin = dp(12) }
-        )
 
         // Stato ("Ti ascolto...", "Sto pensando...")
         stato = TextView(this).apply {
@@ -260,22 +283,11 @@ class MainActivity : Activity() {
                 .apply { topMargin = dp(8) }
         )
 
-        // Grande pulsante del microfono
-        bottoneMic = Button(this).apply {
-            text = "🎤"
-            textSize = 30f
-            setTextColor(Color.WHITE)
-            setOnClickListener { if (inAscolto) fermaAscolto() else iniziaAscolto() }
-        }
-        aggiornaMic()
         radice.addView(
-            bottoneMic,
-            LinearLayout.LayoutParams(dp(88), dp(88)).apply {
-                gravity = Gravity.CENTER_HORIZONTAL
-                topMargin = dp(8)
-                bottomMargin = dp(12)
-            }
+            scorrimento,
+            LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f).apply { topMargin = dp(8) }
         )
+        aggiornaMic()
 
         // Riga per scrivere invece di parlare
         val rigaTesto = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
@@ -303,10 +315,26 @@ class MainActivity : Activity() {
         setContentView(radice)
     }
 
+    /** Aggiorna il reattore in base a cosa sta facendo Jarvis. */
     private fun aggiornaMic() {
-        bottoneMic.background = GradientDrawable().apply {
-            shape = GradientDrawable.OVAL
-            setColor(if (inAscolto) COLORE_ASCOLTO else COLORE_ACCENTO)
+        when {
+            inAscolto -> {
+                reattore.stato = ReattoreView.Stato.ASCOLTO
+                reattore.testoCentrale = "IN ASCOLTO"
+            }
+            occupato -> {
+                reattore.stato = ReattoreView.Stato.PENSIERO
+                reattore.testoCentrale = "ELABORO"
+            }
+            parlando -> {
+                reattore.stato = ReattoreView.Stato.PARLA
+                reattore.testoCentrale = "JARVIS"
+            }
+            else -> {
+                reattore.stato = ReattoreView.Stato.RIPOSO
+                reattore.testoCentrale = "TOCCA"
+                reattore.livelloVoce = 0f
+            }
         }
     }
 
@@ -547,7 +575,7 @@ class MainActivity : Activity() {
         riconoscitore?.startListening(intento)
         inAscolto = true
         aggiornaMic()
-        stato.text = "Ti ascolto..."
+        stato.text = ""
     }
 
     private fun fermaAscolto() {
@@ -559,7 +587,9 @@ class MainActivity : Activity() {
     private val ascoltatore = object : RecognitionListener {
         override fun onReadyForSpeech(params: Bundle?) {}
         override fun onBeginningOfSpeech() {}
-        override fun onRmsChanged(rmsdB: Float) {}
+        override fun onRmsChanged(rmsdB: Float) {
+            reattore.livelloVoce = ((rmsdB + 2f) / 12f).coerceIn(0f, 1f)
+        }
         override fun onBufferReceived(buffer: ByteArray?) {}
         override fun onEvent(eventType: Int, params: Bundle?) {}
 
@@ -635,7 +665,8 @@ class MainActivity : Activity() {
         }
         aggiungiAlRegistro("Tu", testo)
         occupato = true
-        stato.text = "Sto pensando..."
+        stato.text = ""
+        aggiornaMic()
 
         Thread {
             var fonti: List<String> = emptyList()
@@ -655,6 +686,7 @@ class MainActivity : Activity() {
             runOnUiThread {
                 occupato = false
                 stato.text = ""
+                aggiornaMic()
                 aggiungiAlRegistro("Jarvis", risposta)
                 if (fonti.isNotEmpty()) aggiungiAlRegistro("Fonti", fonti.joinToString(" · "))
                 parla(risposta)
