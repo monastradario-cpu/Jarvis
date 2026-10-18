@@ -1,4 +1,4 @@
-name: Esplora modello italiano
+name: Esplora sherpa
 on:
   push:
     branches: [esplora]
@@ -7,37 +7,27 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - run: |
-          sudo apt-get install -y -qq espeak-ng >/dev/null 2>&1
-          pip install -q vosk
-          curl -sSL -o it.zip https://alphacephei.com/vosk/models/vosk-model-small-it-0.22.zip && unzip -q it.zip
-          curl -sSL -o en.zip https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip && unzip -q en.zip
-          for f in "ehi jarvis" "ciao jarvis" "basta" "stop" "jarvis" "accendi la torcia"; do n=$(echo $f | tr ' ' _); espeak-ng -v it -s 150 -w it_$n.wav "$f"; espeak-ng -v en-us -s 150 -w en_$n.wav "$f"; done
-          cat > t.py <<'PY'
-          import json, wave, subprocess, glob, sys
-          from vosk import Model, KaldiRecognizer, SetLogLevel
-          SetLogLevel(0)
-          out = []
-          for name, path in [("it","vosk-model-small-it-0.22"),("en","vosk-model-small-en-us-0.15")]:
-              m = Model(path)
-              cands = ["jarvis","giarvis","gervis","jervis","ciarvis","giarvi","gervasi","gervais","iarvis","jarvi","ciao","ehi","ei","hey","ok","okay","basta","stop","zitto","fermati","silenzio","giar","vis","davis","travis","chow","hi","enough"]
-              for c in cands:
-                  r = KaldiRecognizer(m, 16000, json.dumps([c, "[unk]"]))
-              for g in [["ehi jarvis","ciao jarvis","jarvis","basta","stop","[unk]"],["ehi giarvis","ciao giarvis","giarvis","ciao gervis","gervis","basta","stop","[unk]"],None]:
-                  for wav in sorted(glob.glob("*.wav")):
-                      subprocess.run(["sox", wav, "-r", "16000", "-c", "1", "-b", "16", "x.wav"], check=False)
-                      wf = wave.open("x.wav")
-                      r = KaldiRecognizer(m, 16000, json.dumps(g)) if g else KaldiRecognizer(m, 16000)
-                      r.SetWords(True)
-                      while True:
-                          d = wf.readframes(4000)
-                          if not d: break
-                          r.AcceptWaveform(d)
-                      res = json.loads(r.FinalResult())
-                      out.append(f"{name} g={'free' if g is None else g[0]} {wav}: {res.get('text')} {[ (w['word'], round(w['conf'],2)) for w in res.get('result',[])]}")
-          print("\n".join(out))
-          PY
-          sudo apt-get install -y -qq sox >/dev/null 2>&1
-          python t.py > out.txt 2> err.txt || true
-          grep -i "ignoring\|missing\|vocab" err.txt | sort -u >> out.txt
+          {
+          TAG=$(curl -sSL https://api.github.com/repos/k2-fsa/sherpa-onnx/releases/latest | python3 -c "import sys,json;print(json.load(sys.stdin)['tag_name'])")
+          echo "TAG $TAG"
+          curl -sSL https://api.github.com/repos/k2-fsa/sherpa-onnx/releases/latest | python3 -c "
+          import sys,json
+          for a in json.load(sys.stdin)['assets']:
+              n=a['name']
+              if 'android' in n.lower() or n.endswith('.aar'): print(n, a['size'], a['browser_download_url'])
+          "
+          curl -sSL "https://api.github.com/repos/k2-fsa/sherpa-onnx/releases/tags/tts-models" | python3 -c "
+          import sys,json
+          for a in json.load(sys.stdin)['assets']:
+              n=a['name']
+              if 'it_IT' in n or 'it-IT' in n: print(n, a['size'])
+          "
+          V=${TAG#v}
+          curl -sSL -o a.tar.bz2 "https://github.com/k2-fsa/sherpa-onnx/releases/download/$TAG/sherpa-onnx-$TAG-android.tar.bz2" && tar tjf a.tar.bz2 | head -30
+          ls -la a.tar.bz2
+          curl -sSL -o x.aar "https://github.com/k2-fsa/sherpa-onnx/releases/download/$TAG/sherpa-onnx-$V.aar" && unzip -l x.aar | head -40
+          echo ==== Tts.kt
+          curl -sSL "https://raw.githubusercontent.com/k2-fsa/sherpa-onnx/$TAG/sherpa-onnx/kotlin-api/Tts.kt" | head -150
+          } > out.txt 2>&1
           M=$(sed ':a;N;$!ba;s/%/%25/g;s/\r/%0D/g;s/\n/%0A/g' out.txt)
           echo "::notice title=risultato::$M"
