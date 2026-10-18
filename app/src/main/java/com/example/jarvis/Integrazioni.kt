@@ -459,6 +459,11 @@ class Integrazioni(
         return trovati.values.toList()
     }
 
+    /** Quanti eventi corrispondono ai criteri (per chiedere conferma senza elencarli). */
+    fun contaEventi(cerca: String, giorno: String, giorni: Int): Int =
+        if (!haPermesso(Manifest.permission.READ_CALENDAR) || !haPermesso(Manifest.permission.WRITE_CALENDAR)) -1
+        else trovaEventi(cerca, giorno, giorni).size
+
     private fun descriviEvento(e: Evento): String {
         val f = SimpleDateFormat(if (e.tuttoIlGiorno) "EEEE d MMMM" else "EEEE d MMMM 'alle' HH:mm", italiano)
         return "\"${e.titolo}\" di ${f.format(Date(e.inizio))}"

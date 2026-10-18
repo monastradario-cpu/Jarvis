@@ -496,7 +496,7 @@ class ServizioJarvis : Service() {
     private fun parla(testo: String) {
         if (!attivo) return
         val pulito = testo.replace(Regex("[*#_`]"), "")
-        continuaDopo = pulito.trim().endsWith("?")
+        continuaDopo = pulito.trim().endsWith("?") && cervello.prefs.getBoolean("dialogo_continuo", true)
         aggiornaNotifica(pulito.take(120))
         val voce = tts
         voce?.let { Voce.applica(it, cervello.prefs) }

@@ -148,7 +148,17 @@ class MainActivity : Activity(), Cervello.Uscita {
                     }
 
                     override fun onDone(utteranceId: String?) {
-                        runOnUiThread { parlando = false; aggiornaMic() }
+                        runOnUiThread {
+                            parlando = false
+                            aggiornaMic()
+                            // Conversazione continua: Jarvis ha fatto una domanda, ascolto la risposta
+                            if (utteranceId == "jarvis" && rispostaConDomanda && visibile && !inAscolto && !occupato &&
+                                prefs.getBoolean("dialogo_continuo", true)
+                            ) {
+                                rispostaConDomanda = false
+                                reattore.postDelayed({ if (!inAscolto && !occupato) iniziaAscolto() }, 350)
+                            }
+                        }
                     }
 
                     @Deprecated("Richiesto dalle versioni vecchie di Android")
@@ -745,10 +755,22 @@ class MainActivity : Activity(), Cervello.Uscita {
         )
         pagina.titoloSezione("Come ti chiama")
         val appellativo = pagina.campo("Signore, signora, il tuo nome, oppure vuoto", prefs.getString("appellativo", "signore") ?: "")
+        pagina.titoloSezione("Interazione")
+        val dialogo = pagina.casella(
+            "Conversazione continua: quando Jarvis ti fa una domanda, ascolta subito la risposta",
+            prefs.getBoolean("dialogo_continuo", true)
+        )
+        val confermaApp = pagina.casella(
+            "Prima di aprire un'app, spiegami cosa farai e chiedimi conferma",
+            prefs.getBoolean("conferma_app", true)
+        )
+        pagina.nota("Per cancellare appuntamenti Jarvis chiede sempre due conferme.")
         pagina.mostra {
             prefs.edit()
                 .putString("personalita", stile())
                 .putString("appellativo", appellativo.text.toString().trim())
+                .putBoolean("dialogo_continuo", dialogo.isChecked)
+                .putBoolean("conferma_app", confermaApp.isChecked)
                 .apply()
             aggiungiAlRegistro("Jarvis", "Carattere aggiornato.")
         }
@@ -1298,8 +1320,11 @@ class MainActivity : Activity(), Cervello.Uscita {
     //  BOCCA: sintesi vocale
     // ================================================================
 
+    private var rispostaConDomanda = false
+
     private fun parla(testo: String) {
         val pulito = testo.replace(Regex("[*#_`]"), "")
+        rispostaConDomanda = pulito.trim().endsWith("?")
         tts?.let { Voce.applica(it, prefs) }
         tts?.speak(pulito, TextToSpeech.QUEUE_FLUSH, null, "jarvis")
     }

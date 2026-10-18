@@ -47,7 +47,7 @@ class Cervello private constructor(private val ctx: Context) {
         private const val MAX_RICORDI = 80
         private const val MAX_LEZIONI = 40
         private const val MAX_DIARIO = 300
-        private const val RIFLESSIONE_OGNI = 12
+        private const val RIFLESSIONE_OGNI = 6
 
         @Volatile private var istanza: Cervello? = null
 
@@ -153,6 +153,7 @@ class Cervello private constructor(private val ctx: Context) {
 
     /** Risponde a una richiesta. Va chiamata da un thread in background. */
     fun rispondi(testo: String): Risposta = synchronized(blocco) {
+        turno++
         strumentiUsati.clear()
         fontiUltimaRisposta.clear()
         val r = try {
@@ -251,6 +252,14 @@ class Cervello private constructor(private val ctx: Context) {
         p.append("Usa gli strumenti quando servono per agire sul telefono e non inventare risultati. ")
         p.append("Adesso è $adesso. La città predefinita per il meteo è $citta.\n\n")
         p.append("PERSONALITÀ\n").append(personalita()).append("\n\n")
+        p.append("STILE DI CONVERSAZIONE\n")
+        p.append("- Sii partecipe e curioso. Quando ha senso, fai UNA breve domanda di approfondimento o proponi un passo ")
+        p.append("successivo utile; non farlo quando l'utente vuole solo un comando veloce (sveglia, torcia, volume).\n")
+        p.append("- Collega le risposte a ciò che sai di lui e alle conversazioni passate.\n")
+        p.append("- Quando nella conversazione emergono gusti, abitudini, progetti, persone importanti o opinioni, salvali con ricorda; ")
+        p.append("quando ti corregge o preferisce un modo diverso, salva una lezione con impara_lezione.\n")
+        p.append("- Alcune azioni rispondono \"NON ANCORA ESEGUITO\": in quel caso spiega all'utente cosa farai e chiedi conferma. ")
+        p.append("Chiama conferma_azione solo DOPO la sua risposta, mai nello stesso turno in cui hai chiesto.\n\n")
 
         p.append("COME MIGLIORARE DA SOLO\n")
         p.append("- Quando scopri un fatto stabile o una preferenza dell'utente (nome, persone care, gusti, ")
@@ -282,7 +291,7 @@ class Cervello private constructor(private val ctx: Context) {
             p.append("- Per mettere musica (\"metti Vasco\", \"fammi sentire jazz\") usa riproduci, non controlla_musica.\n")
         }
         if (pluginAttivo("calendario")) {
-            p.append("- Prima di cancellare appuntamenti ripeti all'utente cosa cancellerai e aspetta che confermi. ")
+            p.append("- Per cancellare appuntamenti usa cancella_appuntamenti: NON elencarli, di' solo quanti sono e segui le due conferme richieste. ")
             p.append("Per ricominciare da zero puoi creare un calendario nuovo con crea_calendario.\n")
         }
         if (pluginAttivo("notizie")) {
@@ -904,6 +913,12 @@ class Cervello private constructor(private val ctx: Context) {
         if (nuovo.isNotBlank()) prefs.edit().putString("riassunto", nuovo.take(1500)).apply()
     }
 
+    private fun conversazioneRecente(): String = synchronized(blocco) {
+        val array = if (usaClaude()) messaggiClaude else messaggi
+        val da = (array.length() - 20).coerceAtLeast(0)
+        testoDellaConversazione((da until array.length()).mapNotNull { array.optJSONObject(it) }).takeLast(3000)
+    }
+
     /** Jarvis rilegge le ultime richieste e decide da solo cosa imparare. */
     private fun rifletti() {
         val diario = leggiDiario()
@@ -923,6 +938,8 @@ class Cervello private constructor(private val ctx: Context) {
             "Lezioni già imparate: ${leggiLista("lezioni").joinToString("; ").ifBlank { "nessuna" }}\n" +
             "Routine esistenti: ${nomiRoutine.ifBlank { "nessuna" }}\n\n" +
             "Ultime richieste (data | richiesta | strumenti usati | risposta):\n$righe\n" +
+            "Conversazione recente:\n${conversazioneRecente()}\n\n" +
+            "Impara soprattutto dalle discussioni: interessi, progetti, persone, opinioni e preferenze emerse parlando.\n" +
             "Individua cosa imparare per servire meglio l'utente. Rispondi SOLO con un JSON valido in questo formato:\n" +
             "{\"ricordi\": [\"fatti stabili e nuovi detti dall'utente\"], " +
             "\"lezioni\": [\"regole pratiche per rispondere meglio, ad esempio preferenze o errori da evitare\"], " +
@@ -1188,7 +1205,10 @@ class Cervello private constructor(private val ctx: Context) {
                 listOf(p("testo", "string", "Parole o data da cercare"))),
             strumento("dimentica",
                 "Cancella dalla memoria ricordi, lezioni e routine che contengono una parola. Usa 'tutto' per cancellare tutto.",
-                listOf(p("parola", "string", "Parola da cercare, oppure tutto")), listOf("parola"))
+                listOf(p("parola", "string", "Parola da cercare, oppure tutto")), listOf("parola")),
+            strumento("conferma_azione",
+                "Comunica la risposta dell'utente a un'azione in attesa di conferma (apertura di un'app, cancellazioni).",
+                listOf(p("risposta", "string", "sì se l'utente ha confermato, no se ha rifiutato")), listOf("risposta"))
         )
         val attivi = JSONArray()
         for (s in tutti) {
@@ -1197,8 +1217,83 @@ class Cervello private constructor(private val ctx: Context) {
         return attivi
     }
 
+    // ================================================================
+    //  CONFERME: prima di aprire app e (due volte) prima di cancellare
+    // ================================================================
+
+    private class AzioneInSospeso(
+        val nome: String,
+        val argomenti: JSONObject,
+        var fase: Int,
+        val fasiTotali: Int,
+        val turno: Int,
+        val creata: Long = System.currentTimeMillis()
+    )
+
+    @Volatile private var turno = 0
+    @Volatile private var inSospeso: AzioneInSospeso? = null
+
+    /** Strumenti che aprono un'altra app: prima di usarli Jarvis spiega cosa farà e chiede conferma. */
+    private val STRUMENTI_CHE_APRONO_APP = setOf(
+        "apri_app", "apri_sito", "cerca_sul_web", "cerca_su_youtube", "naviga",
+        "riproduci", "chiama", "scrivi_sms", "invia_whatsapp"
+    )
+
     private fun eseguiStrumento(nome: String, a: JSONObject): String {
         if (!strumentoAttivo(nome)) return "Questo plugin è disattivato nelle impostazioni."
+        return when {
+            nome == "conferma_azione" -> confermaAzione(a.optString("risposta"))
+            nome == "cancella_appuntamenti" -> preparaCancellazione(a)
+            nome in STRUMENTI_CHE_APRONO_APP && prefs.getBoolean("conferma_app", true) -> {
+                inSospeso = AzioneInSospeso(nome, a, 1, 1, turno)
+                "NON ANCORA ESEGUITO. Prima di aprire l'app spiega all'utente in una frase cosa farai " +
+                    "(quale app aprirai e cosa farai lì) e chiedi se può procedere. Aspetta la sua risposta."
+            }
+            else -> eseguiStrumentoDiretto(nome, a)
+        }
+    }
+
+    private fun preparaCancellazione(a: JSONObject): String {
+        val quanti = integrazioni.contaEventi(a.optString("cerca"), a.optString("giorno"), a.optInt("giorni", 1))
+        if (quanti < 0) return chiediPermessoGenerico(Manifest.permission.WRITE_CALENDAR, "modificare il calendario")
+        if (quanti == 0) return "Non trovo appuntamenti da cancellare con questi criteri."
+        inSospeso = AzioneInSospeso("cancella_appuntamenti", a, 1, 2, turno)
+        return "NON ANCORA ESEGUITO. Ho trovato $quanti appuntamenti: NON elencarli. " +
+            "Chiedi all'utente la prima conferma, per esempio: \"Vuole che cancelli $quanti appuntamenti?\""
+    }
+
+    private fun confermaAzione(risposta: String): String {
+        val azione = inSospeso ?: return "Non c'è nessuna azione in attesa di conferma."
+        if (azione.turno == turno) {
+            return "Devi prima aspettare la risposta dell'utente: chiedigli conferma e fermati."
+        }
+        if (System.currentTimeMillis() - azione.creata > 5 * 60_000L) {
+            inSospeso = null
+            return "La richiesta è scaduta: chiedi all'utente di ripeterla."
+        }
+        val r = risposta.lowercase(Locale.ITALIAN).trim()
+        val si = listOf("sì", "si", "ok", "va bene", "procedi", "confermo", "certo", "yes", "vai", "esatto", "d'accordo")
+            .any { r == it || r.startsWith("$it ") || r.startsWith("$it,") }
+        if (!si) {
+            inSospeso = null
+            return "Annullato: non ho fatto nulla."
+        }
+        if (azione.fase < azione.fasiTotali) {
+            azione.fase++
+            return "Prima conferma ricevuta, ancora NON ESEGUITO. Ora chiedi la SECONDA conferma, per esempio: " +
+                "\"È sicuro? La cancellazione è definitiva e non si può annullare.\" Poi aspetta la risposta."
+        }
+        inSospeso = null
+        return if (azione.nome == "cancella_appuntamenti") {
+            integrazioni.cancellaEventi(
+                azione.argomenti.optString("cerca"), azione.argomenti.optString("giorno"), azione.argomenti.optInt("giorni", 1)
+            )
+        } else {
+            eseguiStrumentoDiretto(azione.nome, azione.argomenti)
+        }
+    }
+
+    private fun eseguiStrumentoDiretto(nome: String, a: JSONObject): String {
         return when (nome) {
             "apri_app" -> apriApp(a.optString("nome"))
             "apri_sito" -> apriUrl(normalizzaUrl(a.optString("url")), "Ho aperto il sito.")
