@@ -83,7 +83,7 @@ class Cervello private constructor(private val ctx: Context) {
         Plugin("telefono", "Telefono: app, sveglie, timer, torcia",
             listOf("apri_app", "imposta_sveglia", "imposta_timer", "torcia")),
         Plugin("audio", "Volume e musica",
-            listOf("regola_volume", "controlla_musica")),
+            listOf("regola_volume", "controlla_musica", "riproduci")),
         Plugin("comunicazione", "Chiamate e SMS",
             listOf("chiama", "scrivi_sms")),
         Plugin("notifiche", "Notifiche: leggere e rispondere ai messaggi",
@@ -99,7 +99,7 @@ class Cervello private constructor(private val ctx: Context) {
         Plugin("notizie", "Notizie e informazioni (ANSA, Google News, Wikipedia)",
             listOf("notizie", "cerca_informazioni")),
         Plugin("calendario", "Calendario: impegni e appuntamenti",
-            listOf("leggi_calendario", "crea_appuntamento")),
+            listOf("leggi_calendario", "crea_appuntamento", "modifica_appuntamento", "cancella_appuntamenti", "crea_calendario")),
         Plugin("navigazione", "Navigazione, luoghi e posizione",
             listOf("naviga", "salva_luogo", "dove_sono")),
         Plugin("promemoria", "Promemoria a orario, ripetuti e di posizione",
@@ -269,8 +269,21 @@ class Cervello private constructor(private val ctx: Context) {
             p.append("- Per i messaggi ricevuti usa leggi_notifiche; per rispondere a un messaggio usa rispondi_messaggio.\n")
         }
         if (pluginAttivo("controllo")) {
-            p.append("- Per usare un'altra app: aprila con apri_app, guarda cosa c'è con leggi_schermo, poi usa tocca, ")
-            p.append("scrivi_testo e scorri, rileggendo lo schermo dopo ogni passo. Per WhatsApp usa invia_whatsapp.\n")
+            if (AccessibilitaJarvis.istanza != null) {
+                p.append("- Per fare qualcosa in un'altra app: aprila con apri_app e NON fermarti lì. Usa leggi_schermo, poi tocca, ")
+                p.append("scrivi_testo e scorri, rileggendo lo schermo dopo ogni passo, finché la richiesta è completata. ")
+                p.append("Per WhatsApp usa invia_whatsapp.\n")
+            } else {
+                p.append("- Il controllo delle app NON è attivo: puoi aprire le app ma non toccare o scrivere al loro interno. ")
+                p.append("Se serve, spiega all'utente di attivarlo da SISTEMA, ATTIVO, Controllo delle app.\n")
+            }
+        }
+        if (pluginAttivo("audio")) {
+            p.append("- Per mettere musica (\"metti Vasco\", \"fammi sentire jazz\") usa riproduci, non controlla_musica.\n")
+        }
+        if (pluginAttivo("calendario")) {
+            p.append("- Prima di cancellare appuntamenti ripeti all'utente cosa cancellerai e aspetta che confermi. ")
+            p.append("Per ricominciare da zero puoi creare un calendario nuovo con crea_calendario.\n")
         }
         if (pluginAttivo("notizie")) {
             p.append("- Per le notizie usa notizie (categoria cronaca, politica, mondo, economia, sport, tecnologia, oppure un argomento o una città). ")
@@ -1009,7 +1022,12 @@ class Cervello private constructor(private val ctx: Context) {
                     p("azione", "string", "alza, abbassa, muto oppure massimo"),
                     p("passi", "integer", "Di quanti scatti cambiare il volume, di solito 3")
                 ), listOf("azione")),
-            strumento("controlla_musica", "Controlla la musica o il video in riproduzione.",
+            strumento("riproduci", "Fa partire musica: una canzone, un artista, un album, una playlist o un genere, su Spotify, YouTube Music o altre app.",
+                listOf(
+                    p("cosa", "string", "Cosa ascoltare, es. Vasco Rossi, musica rilassante; vuoto per riprendere"),
+                    p("app", "string", "App da usare, es. Spotify; vuoto per quella preferita")
+                )),
+            strumento("controlla_musica", "Controlla la musica già in riproduzione: pausa, play, avanti, indietro.",
                 listOf(p("azione", "string", "play, pausa, avanti oppure indietro")), listOf("azione")),
             // --- Comunicazione ---
             strumento("chiama", "Prepara una telefonata a un contatto o a un numero. L'utente preme poi il tasto verde.",
@@ -1082,6 +1100,25 @@ class Cervello private constructor(private val ctx: Context) {
                     p("giorno", "string", "oggi, domani, un giorno della settimana oppure una data AAAA-MM-GG"),
                     p("giorni", "integer", "Quanti giorni a partire da quello, di solito 1")
                 )),
+            strumento("modifica_appuntamento", "Sposta o modifica un appuntamento esistente.",
+                listOf(
+                    p("cerca", "string", "Parola del titolo dell'appuntamento da modificare"),
+                    p("giorno", "string", "Giorno attuale dell'appuntamento, se noto"),
+                    p("nuovo_titolo", "string", "Nuovo titolo, facoltativo"),
+                    p("nuovo_giorno", "string", "Nuovo giorno, facoltativo"),
+                    p("nuova_ora", "string", "Nuova ora HH:MM, facoltativa"),
+                    p("durata_minuti", "integer", "Nuova durata, facoltativa"),
+                    p("luogo", "string", "Nuovo luogo, facoltativo")
+                ), listOf("cerca")),
+            strumento("cancella_appuntamenti",
+                "Cancella appuntamenti dal calendario. Usalo SOLO dopo che l'utente ha confermato esplicitamente cosa cancellare.",
+                listOf(
+                    p("cerca", "string", "Parola del titolo, oppure tutti"),
+                    p("giorno", "string", "Giorno di inizio; vuoto per i prossimi 60 giorni"),
+                    p("giorni", "integer", "Quanti giorni a partire da quello, di solito 1")
+                ), listOf("cerca")),
+            strumento("crea_calendario", "Crea un calendario nuovo sul telefono, dove andranno i nuovi appuntamenti.",
+                listOf(p("nome", "string", "Nome del calendario, es. Jarvis o Lavoro")), listOf("nome")),
             strumento("crea_appuntamento", "Aggiunge un appuntamento al calendario del telefono.",
                 listOf(
                     p("titolo", "string", "Titolo, es. Dentista"),
@@ -1198,6 +1235,13 @@ class Cervello private constructor(private val ctx: Context) {
                 a.optString("titolo"), a.optString("giorno"), a.optString("ora"), a.optInt("durata_minuti", 60), a.optString("luogo")
             )
             "naviga" -> integrazioni.naviga(a.optString("destinazione"), a.optString("mezzo"))
+            "riproduci" -> riproduci(a.optString("cosa"), a.optString("app"))
+            "modifica_appuntamento" -> integrazioni.modificaEvento(
+                a.optString("cerca"), a.optString("giorno"), a.optString("nuovo_titolo"), a.optString("nuovo_giorno"),
+                a.optString("nuova_ora"), a.optInt("durata_minuti", 0), a.optString("luogo")
+            )
+            "cancella_appuntamenti" -> integrazioni.cancellaEventi(a.optString("cerca"), a.optString("giorno"), a.optInt("giorni", 1))
+            "crea_calendario" -> integrazioni.creaCalendario(a.optString("nome"))
             "salva_luogo" -> integrazioni.salvaLuogo(a.optString("nome"), a.optString("indirizzo"))
             "dove_sono" -> integrazioni.doveSono()
             "promemoria" -> creaPromemoria(a.optString("testo"), a.optString("giorno", "oggi"), a.optString("ora"), a.optString("ripeti", "no"))
@@ -1278,7 +1322,7 @@ class Cervello private constructor(private val ctx: Context) {
             } else {
                 lancio.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 lanciatore().startActivity(lancio)
-                "Ho aperto ${trovata.loadLabel(pm)}."
+                "Ho aperto ${trovata.loadLabel(pm)}. Se l'utente voleva fare qualcosa nell'app, continua: usa leggi_schermo e poi tocca o scrivi."
             }
         }
     }
@@ -1357,9 +1401,16 @@ class Cervello private constructor(private val ctx: Context) {
     private fun chiama(contatto: String): String {
         if (!eUnNumero(contatto) && permessoContattiMancante()) return chiediPermessoContatti()
         val numero = trovaNumero(contatto) ?: return "Non ho trovato $contatto in rubrica."
+        val puoChiamare = Build.VERSION.SDK_INT < 23 ||
+            ctx.checkSelfPermission(Manifest.permission.CALL_PHONE) == PackageManager.PERMISSION_GRANTED
+        if (puoChiamare) {
+            return avvia(Intent(Intent.ACTION_CALL, Uri.parse("tel:" + Uri.encode(numero))), "Chiamo $contatto.")
+        }
+        // Senza permesso: lo chiedo e intanto preparo la chiamata
+        uscita?.let { schermata -> principale.post { schermata.chiediPermesso(Manifest.permission.CALL_PHONE) } }
         return avvia(
             Intent(Intent.ACTION_DIAL, Uri.parse("tel:" + Uri.encode(numero))),
-            "Ho preparato la chiamata a $contatto: premi il tasto verde."
+            "Ho preparato la chiamata a $contatto: premi il tasto verde. Se mi dai il permesso per le telefonate, la prossima volta chiamo io."
         )
     }
 
@@ -1606,7 +1657,98 @@ class Cervello private constructor(private val ctx: Context) {
         "Volume al $percentuale per cento."
     }
 
-    private fun controllaMusica(azione: String): String = suUi {
+    private val APP_MUSICA = linkedMapOf(
+        "spotify" to "com.spotify.music",
+        "youtube music" to "com.google.android.apps.youtube.music",
+        "youtube" to "com.google.android.youtube",
+        "amazon music" to "com.amazon.mp3",
+        "apple music" to "com.apple.android.music",
+        "deezer" to "deezer.android.app"
+    )
+
+    private fun installata(pacchetto: String) = try {
+        ctx.packageManager.getLaunchIntentForPackage(pacchetto) != null
+    } catch (e: Exception) {
+        false
+    }
+
+    /** L'app musicale da usare: quella chiesta, quella preferita, oppure la prima installata. */
+    private fun appMusica(richiesta: String): Pair<String, String>? {
+        val r = richiesta.lowercase(Locale.ITALIAN).trim()
+        APP_MUSICA.entries.firstOrNull { r.isNotEmpty() && r.contains(it.key) && installata(it.value) }?.let { return it.key to it.value }
+        val preferita = prefs.getString("app_musica", "") ?: ""
+        APP_MUSICA.entries.firstOrNull { it.key == preferita && installata(it.value) }?.let { return it.key to it.value }
+        return APP_MUSICA.entries.firstOrNull { installata(it.value) }?.let { it.key to it.value }
+    }
+
+    private fun premiTastoMusica(tasto: Int) {
+        val audio = ctx.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        audio.dispatchMediaKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, tasto))
+        audio.dispatchMediaKeyEvent(KeyEvent(KeyEvent.ACTION_UP, tasto))
+    }
+
+    private fun musicaInRiproduzione() = (ctx.getSystemService(Context.AUDIO_SERVICE) as AudioManager).isMusicActive
+
+    /** Fa partire una canzone, un artista, un album, una playlist o un genere nell'app musicale. */
+    private fun riproduci(cosa: String, app: String): String {
+        val (nomeApp, pacchetto) = appMusica(app) ?: return "Non trovo app musicali installate, come Spotify o YouTube Music."
+        prefs.edit().putString("app_musica", nomeApp).apply()
+        val ricerca = cosa.trim()
+        if (ricerca.isEmpty()) {
+            // solo "metti la musica": apro l'app e premo play
+            val lancio = ctx.packageManager.getLaunchIntentForPackage(pacchetto) ?: return "Non riesco ad aprire $nomeApp."
+            avvia(lancio, "ok")
+            Thread.sleep(3000)
+            premiTastoMusica(KeyEvent.KEYCODE_MEDIA_PLAY)
+            Thread.sleep(1500)
+            return if (musicaInRiproduzione()) "Musica avviata su $nomeApp." else "Ho aperto $nomeApp ma la musica non è partita: dimmi cosa vuoi ascoltare."
+        }
+        // Richiesta standard di Android "riproduci da ricerca", supportata da Spotify, YouTube Music e altre
+        val intento = Intent(android.provider.MediaStore.INTENT_ACTION_MEDIA_PLAY_FROM_SEARCH)
+            .putExtra(android.app.SearchManager.QUERY, ricerca)
+            .putExtra(android.provider.MediaStore.EXTRA_MEDIA_FOCUS, "vnd.android.cursor.item/*")
+            .setPackage(pacchetto)
+        val esito = avvia(intento, "ok")
+        if (esito != "ok") {
+            // l'app non supporta la ricerca: apro la ricerca nell'app
+            val ricercaWeb = when (nomeApp) {
+                "spotify" -> "spotify:search:" + Uri.encode(ricerca)
+                "youtube music" -> "https://music.youtube.com/search?q=" + Uri.encode(ricerca)
+                else -> "https://www.youtube.com/results?search_query=" + Uri.encode(ricerca)
+            }
+            avvia(Intent(Intent.ACTION_VIEW, Uri.parse(ricercaWeb)).setPackage(pacchetto), "ok")
+        }
+        Thread.sleep(3500)
+        if (!musicaInRiproduzione()) premiTastoMusica(KeyEvent.KEYCODE_MEDIA_PLAY)
+        Thread.sleep(1500)
+        if (!musicaInRiproduzione()) {
+            // ultimo tentativo: tocco il pulsante di riproduzione sullo schermo
+            AccessibilitaJarvis.istanza?.let { acc ->
+                for (pulsante in listOf("Riproduci", "Play", "Riproduzione casuale", "Shuffle", "Ascolta")) {
+                    if (acc.tocca(pulsante).startsWith("Ho toccato")) break
+                }
+            }
+            Thread.sleep(1500)
+        }
+        return if (musicaInRiproduzione()) "Metto $ricerca su $nomeApp."
+        else "Ho cercato $ricerca su $nomeApp: scegli il brano da far partire, oppure attiva il controllo delle app e lo faccio io."
+    }
+
+    private fun controllaMusica(azione: String): String {
+        val a = azione.lowercase(Locale.ITALIAN)
+        val vuolePlay = !(a.contains("paus") || a.contains("stop") || a.contains("ferma") || a.contains("avanti") ||
+            a.contains("success") || a.contains("prossim") || a.contains("indietro") || a.contains("precedent"))
+        // "play" senza musica attiva: apro l'app musicale e faccio partire
+        if (vuolePlay && !musicaInRiproduzione()) {
+            premiTastoMusica(KeyEvent.KEYCODE_MEDIA_PLAY)
+            Thread.sleep(1200)
+            if (!musicaInRiproduzione()) return riproduci("", "")
+            return "Riprendo la riproduzione."
+        }
+        return controllaMusicaTasti(azione)
+    }
+
+    private fun controllaMusicaTasti(azione: String): String = suUi {
         val audio = ctx.getSystemService(Context.AUDIO_SERVICE) as AudioManager
         val a = azione.lowercase(Locale.ITALIAN)
         val (tasto, messaggio) = when {

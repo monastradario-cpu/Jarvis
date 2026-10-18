@@ -319,7 +319,7 @@ class Integrazioni(
         if (!haPermesso(Manifest.permission.WRITE_CALENDAR) || !haPermesso(Manifest.permission.READ_CALENDAR)) {
             return chiediPermesso(Manifest.permission.WRITE_CALENDAR, "scrivere nel calendario")
         }
-        val idCalendario = ctx.contentResolver.query(
+        val idCalendario = calendarioJarvis() ?: ctx.contentResolver.query(
             CalendarContract.Calendars.CONTENT_URI,
             arrayOf(CalendarContract.Calendars._ID),
             "${CalendarContract.Calendars.VISIBLE} = 1 AND ${CalendarContract.Calendars.CALENDAR_ACCESS_LEVEL} >= ${CalendarContract.Calendars.CAL_ACCESS_CONTRIBUTOR}",
@@ -375,6 +375,158 @@ class Integrazioni(
             // l'evento c'è comunque
         }
         return "Appuntamento \"${titolo.trim()}\" salvato per $quando."
+    }
+
+    // ---------- calendario creato da Jarvis ----------
+
+    /** Il calendario creato con crea_calendario, se esiste ancora. */
+    private fun calendarioJarvis(): Long? {
+        val id = prefs.getLong("calendario_jarvis", -1L)
+        if (id < 0) return null
+        val esiste = ctx.contentResolver.query(
+            ContentUris.withAppendedId(CalendarContract.Calendars.CONTENT_URI, id),
+            arrayOf(CalendarContract.Calendars._ID), null, null, null
+        )?.use { it.moveToFirst() } ?: false
+        if (!esiste) prefs.edit().remove("calendario_jarvis").apply()
+        return if (esiste) id else null
+    }
+
+    /** Crea un calendario nuovo sul telefono: da qui in poi i nuovi appuntamenti finiscono lì. */
+    fun creaCalendario(nome: String): String {
+        if (!haPermesso(Manifest.permission.WRITE_CALENDAR) || !haPermesso(Manifest.permission.READ_CALENDAR)) {
+            return chiediPermesso(Manifest.permission.WRITE_CALENDAR, "creare un calendario")
+        }
+        val titolo = nome.trim().ifBlank { "Jarvis" }
+        val uri = CalendarContract.Calendars.CONTENT_URI.buildUpon()
+            .appendQueryParameter(CalendarContract.CALLER_IS_SYNCADAPTER, "true")
+            .appendQueryParameter(CalendarContract.Calendars.ACCOUNT_NAME, "Jarvis")
+            .appendQueryParameter(CalendarContract.Calendars.ACCOUNT_TYPE, CalendarContract.ACCOUNT_TYPE_LOCAL)
+            .build()
+        val valori = ContentValues().apply {
+            put(CalendarContract.Calendars.ACCOUNT_NAME, "Jarvis")
+            put(CalendarContract.Calendars.ACCOUNT_TYPE, CalendarContract.ACCOUNT_TYPE_LOCAL)
+            put(CalendarContract.Calendars.NAME, titolo)
+            put(CalendarContract.Calendars.CALENDAR_DISPLAY_NAME, titolo)
+            put(CalendarContract.Calendars.CALENDAR_COLOR, 0xFFD4A84B.toInt())
+            put(CalendarContract.Calendars.CALENDAR_ACCESS_LEVEL, CalendarContract.Calendars.CAL_ACCESS_OWNER)
+            put(CalendarContract.Calendars.OWNER_ACCOUNT, "Jarvis")
+            put(CalendarContract.Calendars.VISIBLE, 1)
+            put(CalendarContract.Calendars.SYNC_EVENTS, 1)
+            put(CalendarContract.Calendars.CALENDAR_TIME_ZONE, TimeZone.getDefault().id)
+        }
+        val nuovo = try {
+            ctx.contentResolver.insert(uri, valori)
+        } catch (e: Exception) {
+            null
+        } ?: return "Non sono riuscito a creare il calendario."
+        prefs.edit().putLong("calendario_jarvis", ContentUris.parseId(nuovo)).apply()
+        return "Ho creato il calendario \"$titolo\" sul telefono: da ora i nuovi appuntamenti li metto lì."
+    }
+
+    /** Un evento trovato nel calendario. */
+    private class Evento(val id: Long, val titolo: String, val inizio: Long, val fine: Long, val tuttoIlGiorno: Boolean)
+
+    /** Cerca eventi per parola del titolo (o "tutti") in un periodo: senza giorno, da oggi ai prossimi 60 giorni. */
+    private fun trovaEventi(cerca: String, giorno: String, giorni: Int): List<Evento> {
+        val inizio = if (giorno.isBlank()) interpretaData("oggi")!! else interpretaData(giorno) ?: return emptyList()
+        val durata = if (giorno.isBlank()) 60 else giorni.coerceIn(1, 366)
+        val fine = (inizio.clone() as Calendar).apply { add(Calendar.DAY_OF_MONTH, durata) }
+        val costruttore = CalendarContract.Instances.CONTENT_URI.buildUpon()
+        ContentUris.appendId(costruttore, inizio.timeInMillis)
+        ContentUris.appendId(costruttore, fine.timeInMillis)
+        val c = cerca.lowercase(italiano).trim()
+        val tutti = c.isEmpty() || c == "tutti" || c == "tutto" || c == "tutti gli eventi"
+        val trovati = LinkedHashMap<Long, Evento>()
+        ctx.contentResolver.query(
+            costruttore.build(),
+            arrayOf(
+                CalendarContract.Instances.EVENT_ID,
+                CalendarContract.Instances.TITLE,
+                CalendarContract.Instances.BEGIN,
+                CalendarContract.Instances.END,
+                CalendarContract.Instances.ALL_DAY
+            ),
+            null, null, "${CalendarContract.Instances.BEGIN} ASC"
+        )?.use { cur ->
+            while (cur.moveToNext()) {
+                val titolo = cur.getString(1) ?: ""
+                if (tutti || titolo.lowercase(italiano).contains(c)) {
+                    val id = cur.getLong(0)
+                    if (!trovati.containsKey(id)) trovati[id] = Evento(id, titolo, cur.getLong(2), cur.getLong(3), cur.getInt(4) == 1)
+                }
+            }
+        }
+        return trovati.values.toList()
+    }
+
+    private fun descriviEvento(e: Evento): String {
+        val f = SimpleDateFormat(if (e.tuttoIlGiorno) "EEEE d MMMM" else "EEEE d MMMM 'alle' HH:mm", italiano)
+        return "\"${e.titolo}\" di ${f.format(Date(e.inizio))}"
+    }
+
+    /** Cancella gli eventi trovati (massimo 100 alla volta). Da usare solo dopo la conferma dell'utente. */
+    fun cancellaEventi(cerca: String, giorno: String, giorni: Int): String {
+        if (!haPermesso(Manifest.permission.WRITE_CALENDAR) || !haPermesso(Manifest.permission.READ_CALENDAR)) {
+            return chiediPermesso(Manifest.permission.WRITE_CALENDAR, "modificare il calendario")
+        }
+        val eventi = trovaEventi(cerca, giorno, giorni)
+        if (eventi.isEmpty()) return "Non trovo eventi da cancellare."
+        var cancellati = 0
+        for (e in eventi.take(100)) {
+            try {
+                if (ctx.contentResolver.delete(ContentUris.withAppendedId(CalendarContract.Events.CONTENT_URI, e.id), null, null) > 0) cancellati++
+            } catch (ex: Exception) {
+                // evento di un calendario in sola lettura
+            }
+        }
+        val nonCancellati = eventi.size.coerceAtMost(100) - cancellati
+        return "Ho cancellato $cancellati eventi." +
+            (if (nonCancellati > 0) " $nonCancellati non si possono cancellare perché appartengono a calendari in sola lettura." else "") +
+            (if (eventi.size > 100) " Ce ne sono altri: ripeti la richiesta per continuare." else "")
+    }
+
+    /** Sposta o modifica un evento esistente. */
+    fun modificaEvento(cerca: String, giorno: String, nuovoTitolo: String, nuovoGiorno: String, nuovaOra: String, durataMinuti: Int, luogo: String): String {
+        if (!haPermesso(Manifest.permission.WRITE_CALENDAR) || !haPermesso(Manifest.permission.READ_CALENDAR)) {
+            return chiediPermesso(Manifest.permission.WRITE_CALENDAR, "modificare il calendario")
+        }
+        if (cerca.isBlank()) return "Dimmi quale appuntamento modificare."
+        val eventi = trovaEventi(cerca, giorno, 1)
+        if (eventi.isEmpty()) return "Non trovo l'appuntamento \"$cerca\"."
+        if (eventi.size > 1) {
+            return "Ho trovato più appuntamenti: " + eventi.take(5).joinToString("; ") { descriviEvento(it) } +
+                ". Chiedi all'utente quale e indica il giorno."
+        }
+        val e = eventi[0]
+        val valori = ContentValues()
+        if (nuovoTitolo.isNotBlank()) valori.put(CalendarContract.Events.TITLE, nuovoTitolo.trim())
+        if (luogo.isNotBlank()) valori.put(CalendarContract.Events.EVENT_LOCATION, luogo.trim())
+        if (nuovoGiorno.isNotBlank() || nuovaOra.isNotBlank() || durataMinuti > 0) {
+            val vecchioInizio = Calendar.getInstance().apply { timeInMillis = e.inizio }
+            val nuovoInizio = if (nuovoGiorno.isNotBlank()) {
+                interpretaData(nuovoGiorno) ?: return "Non ho capito il nuovo giorno \"$nuovoGiorno\"."
+            } else {
+                (vecchioInizio.clone() as Calendar).apply { set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0) }
+            }
+            val ora = if (nuovaOra.isNotBlank()) interpretaOra(nuovaOra) ?: return "Non ho capito la nuova ora \"$nuovaOra\"."
+            else vecchioInizio.get(Calendar.HOUR_OF_DAY) to vecchioInizio.get(Calendar.MINUTE)
+            nuovoInizio.set(Calendar.HOUR_OF_DAY, ora.first)
+            nuovoInizio.set(Calendar.MINUTE, ora.second)
+            val durata = if (durataMinuti > 0) durataMinuti * 60_000L else (e.fine - e.inizio).coerceAtLeast(15 * 60_000L)
+            valori.put(CalendarContract.Events.DTSTART, nuovoInizio.timeInMillis)
+            valori.put(CalendarContract.Events.DTEND, nuovoInizio.timeInMillis + durata)
+            if (e.tuttoIlGiorno && nuovaOra.isNotBlank()) {
+                valori.put(CalendarContract.Events.ALL_DAY, 0)
+                valori.put(CalendarContract.Events.EVENT_TIMEZONE, TimeZone.getDefault().id)
+            }
+        }
+        if (valori.size() == 0) return "Dimmi cosa cambiare dell'appuntamento."
+        return try {
+            val n = ctx.contentResolver.update(ContentUris.withAppendedId(CalendarContract.Events.CONTENT_URI, e.id), valori, null, null)
+            if (n > 0) "Ho aggiornato ${descriviEvento(e)}." else "Non sono riuscito a modificarlo."
+        } catch (ex: Exception) {
+            "Questo appuntamento è in un calendario in sola lettura e non si può modificare."
+        }
     }
 
     // ================================================================
