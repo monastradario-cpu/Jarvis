@@ -62,6 +62,8 @@ class Cervello private constructor(private val ctx: Context) {
         fun notaMemoria(testo: String)
         fun chiediPermesso(permesso: String)
         fun nuovoScambio(domanda: String, risposta: String, fonti: List<String>)
+        /** Apre la fotocamera, salva la foto in [file] e chiama [alTermine] con l'esito. */
+        fun scattaFoto(file: File, alTermine: (Boolean) -> Unit)
     }
 
     class Plugin(val id: String, val nome: String, val strumenti: List<String>)
@@ -94,6 +96,18 @@ class Cervello private constructor(private val ctx: Context) {
             listOf("web_search")),
         Plugin("meteo", "Meteo",
             listOf("meteo")),
+        Plugin("notizie", "Notizie e informazioni (ANSA, Google News, Wikipedia)",
+            listOf("notizie", "cerca_informazioni")),
+        Plugin("calendario", "Calendario: impegni e appuntamenti",
+            listOf("leggi_calendario", "crea_appuntamento")),
+        Plugin("navigazione", "Navigazione, luoghi e posizione",
+            listOf("naviga", "salva_luogo", "dove_sono")),
+        Plugin("promemoria", "Promemoria a orario, ripetuti e di posizione",
+            listOf("promemoria", "promemoria_luogo", "elenca_promemoria", "cancella_promemoria")),
+        Plugin("vista", "Vista: foto descritte, testi letti e tradotti",
+            listOf("guarda")),
+        Plugin("mattino", "Riepilogo del mattino",
+            listOf("riepilogo_giornata")),
         Plugin("note", "Note",
             listOf("prendi_nota", "leggi_note"))
     )
@@ -115,6 +129,20 @@ class Cervello private constructor(private val ctx: Context) {
     fun chiaveAttiva(): String =
         (if (usaClaude()) prefs.getString("chiave_claude", "") else prefs.getString("api_key", ""))
             ?.trim() ?: ""
+
+    private val integrazioni by lazy { Integrazioni(ctx, prefs, ::avvia, ::chiediPermessoGenerico) }
+
+    /** Chiede un permesso dalla schermata (se è aperta) e restituisce cosa dire all'utente. */
+    private fun chiediPermessoGenerico(permesso: String, motivo: String): String {
+        val schermata = uscita
+            ?: return "Mi serve il permesso per $motivo: apri l'app Jarvis e ripeti la richiesta da lì."
+        principale.post { schermata.chiediPermesso(permesso) }
+        return if (permesso == Manifest.permission.ACCESS_BACKGROUND_LOCATION) {
+            "Per i promemoria di posizione mi serve la posizione sempre: scegli \"Consenti sempre\" e ripeti la richiesta."
+        } else {
+            "Mi serve il permesso per $motivo. Concedilo e ripeti la richiesta."
+        }
+    }
 
     /** Da dove aprire le altre app: il servizio di accessibilità può farlo anche in background. */
     private fun lanciatore(): Context = AccessibilitaJarvis.istanza ?: ctx
@@ -244,6 +272,23 @@ class Cervello private constructor(private val ctx: Context) {
             p.append("- Per usare un'altra app: aprila con apri_app, guarda cosa c'è con leggi_schermo, poi usa tocca, ")
             p.append("scrivi_testo e scorri, rileggendo lo schermo dopo ogni passo. Per WhatsApp usa invia_whatsapp.\n")
         }
+        if (pluginAttivo("notizie")) {
+            p.append("- Per le notizie usa notizie (categoria cronaca, politica, mondo, economia, sport, tecnologia, oppure un argomento o una città). ")
+            p.append("Riassumile a voce in modo discorsivo, al massimo 5, citando la fonte (\"secondo l'ANSA\"), senza leggere i titoli parola per parola. ")
+            p.append("Per fatti, persone, luoghi o cose che possono essere cambiate usa cerca_informazioni.\n")
+        }
+        if (pluginAttivo("calendario")) {
+            p.append("- Per gli impegni usa leggi_calendario e crea_appuntamento; calcola tu la data esatta a partire da oggi.\n")
+        }
+        if (pluginAttivo("promemoria")) {
+            p.append("- Per \"ricordamelo\" usa promemoria (orario, anche ripetuto) o promemoria_luogo (quando arrivo o esco da un posto).\n")
+        }
+        if (pluginAttivo("vista")) {
+            p.append("- Se l'utente ti chiede di guardare, leggere o tradurre qualcosa che ha davanti, usa guarda.\n")
+        }
+        if (pluginAttivo("mattino")) {
+            p.append("- Per il riepilogo del mattino usa riepilogo_giornata e raccontalo come un buongiorno, in poche frasi.\n")
+        }
         p.append("- Prima di inviare messaggi, pubblicare, comprare, cancellare o cambiare impostazioni importanti, ")
         p.append("ripeti all'utente cosa stai per fare e chiedi conferma, a meno che non ti abbia già detto ")
         p.append("chiaramente destinatario e testo.\n")
@@ -260,6 +305,8 @@ class Cervello private constructor(private val ctx: Context) {
             }
         }
         if (riassunto.isNotBlank()) p.append("Riassunto delle conversazioni passate: $riassunto\n")
+        val luoghi = integrazioni.descriviLuoghi()
+        if (luoghi.isNotBlank()) p.append("Luoghi salvati: $luoghi.\n")
         if (ricordi.isEmpty() && lezioni.isEmpty() && routine.length() == 0 && riassunto.isBlank()) {
             p.append("Ancora vuota: è una delle prime conversazioni.\n")
         }
@@ -1020,6 +1067,66 @@ class Cervello private constructor(private val ctx: Context) {
                     p("contatto", "string", "Nome in rubrica oppure numero di telefono"),
                     p("testo", "string", "Testo del messaggio")
                 ), listOf("contatto", "testo")),
+            // --- Notizie e informazioni ---
+            strumento("notizie", "Ultime notizie italiane: per categoria (feed ANSA) oppure su un argomento o una città (Google News).",
+                listOf(
+                    p("categoria", "string", "principali, cronaca, politica, mondo, economia, sport oppure tecnologia"),
+                    p("argomento", "string", "Argomento o città, es. cronaca di Roma; vuoto per usare la categoria"),
+                    p("quante", "integer", "Quante notizie, di solito 5")
+                )),
+            strumento("cerca_informazioni", "Cerca informazioni su fatti, persone, luoghi o argomenti (Wikipedia e notizie recenti).",
+                listOf(p("domanda", "string", "Cosa cercare")), listOf("domanda")),
+            // --- Calendario ---
+            strumento("leggi_calendario", "Legge gli impegni del calendario del telefono.",
+                listOf(
+                    p("giorno", "string", "oggi, domani, un giorno della settimana oppure una data AAAA-MM-GG"),
+                    p("giorni", "integer", "Quanti giorni a partire da quello, di solito 1")
+                )),
+            strumento("crea_appuntamento", "Aggiunge un appuntamento al calendario del telefono.",
+                listOf(
+                    p("titolo", "string", "Titolo, es. Dentista"),
+                    p("giorno", "string", "Data AAAA-MM-GG, oppure domani o un giorno della settimana"),
+                    p("ora", "string", "Ora HH:MM; vuota per un evento di tutto il giorno"),
+                    p("durata_minuti", "integer", "Durata in minuti, di solito 60"),
+                    p("luogo", "string", "Luogo, facoltativo")
+                ), listOf("titolo", "giorno")),
+            // --- Navigazione ---
+            strumento("naviga", "Avvia il percorso su Google Maps verso un indirizzo o un luogo salvato (es. casa).",
+                listOf(
+                    p("destinazione", "string", "Indirizzo, nome di un posto o luogo salvato"),
+                    p("mezzo", "string", "auto, a piedi, bici oppure mezzi pubblici")
+                ), listOf("destinazione")),
+            strumento("salva_luogo", "Salva un luogo preferito, es. casa o lavoro, con un indirizzo oppure la posizione attuale.",
+                listOf(
+                    p("nome", "string", "Nome del luogo, es. casa"),
+                    p("indirizzo", "string", "Indirizzo; vuoto o \"qui\" per la posizione attuale")
+                ), listOf("nome")),
+            strumento("dove_sono", "Dice dove si trova l'utente in questo momento.",
+                listOf(p("dettaglio", "string", "Facoltativo"))),
+            // --- Promemoria ---
+            strumento("promemoria", "Promemoria a una data e ora, anche ripetuto. Jarvis avvisa con una notifica e a voce.",
+                listOf(
+                    p("testo", "string", "Cosa ricordare"),
+                    p("giorno", "string", "oggi, domani, un giorno della settimana o una data AAAA-MM-GG"),
+                    p("ora", "string", "Ora HH:MM"),
+                    p("ripeti", "string", "no, ogni giorno, feriali, ogni settimana oppure ogni mese")
+                ), listOf("testo", "ora")),
+            strumento("promemoria_luogo", "Promemoria che scatta quando l'utente arriva o esce da un luogo.",
+                listOf(
+                    p("testo", "string", "Cosa ricordare"),
+                    p("luogo", "string", "Luogo salvato (es. casa) o indirizzo"),
+                    p("quando", "string", "arrivo oppure uscita")
+                ), listOf("testo", "luogo")),
+            strumento("elenca_promemoria", "Elenca i promemoria attivi.",
+                listOf(p("filtro", "string", "Facoltativo"))),
+            strumento("cancella_promemoria", "Cancella i promemoria che contengono una parola, oppure tutti.",
+                listOf(p("parola", "string", "Parola da cercare, oppure tutti")), listOf("parola")),
+            // --- Vista ---
+            strumento("guarda", "Apre la fotocamera: l'utente scatta una foto e Jarvis la descrive, legge i testi o li traduce.",
+                listOf(p("domanda", "string", "Cosa vuole sapere l'utente, es. cosa vedi, leggimi questo, traduci")), listOf("domanda")),
+            // --- Mattino ---
+            strumento("riepilogo_giornata", "Raccoglie meteo, impegni, promemoria, messaggi e notizie principali di oggi.",
+                listOf(p("tipo", "string", "mattino, facoltativo"))),
             // --- Memoria (sempre attiva) ---
             strumento("ricorda",
                 "Salva nella memoria permanente un fatto stabile o una preferenza dell'utente. " +
@@ -1084,6 +1191,21 @@ class Cervello private constructor(private val ctx: Context) {
             "scorri" -> AccessibilitaJarvis.istanza?.scorri(a.optString("direzione")) ?: AccessibilitaJarvis.AVVISO
             "azione_sistema" -> AccessibilitaJarvis.istanza?.azioneGlobale(a.optString("azione")) ?: AccessibilitaJarvis.AVVISO
             "invia_whatsapp" -> inviaWhatsapp(a.optString("contatto"), a.optString("testo"))
+            "notizie" -> integrazioni.notizie(a.optString("categoria"), a.optString("argomento"), a.optInt("quante", 5))
+            "cerca_informazioni" -> integrazioni.cercaInformazioni(a.optString("domanda"))
+            "leggi_calendario" -> integrazioni.leggiCalendario(a.optString("giorno", "oggi"), a.optInt("giorni", 1))
+            "crea_appuntamento" -> integrazioni.creaEvento(
+                a.optString("titolo"), a.optString("giorno"), a.optString("ora"), a.optInt("durata_minuti", 60), a.optString("luogo")
+            )
+            "naviga" -> integrazioni.naviga(a.optString("destinazione"), a.optString("mezzo"))
+            "salva_luogo" -> integrazioni.salvaLuogo(a.optString("nome"), a.optString("indirizzo"))
+            "dove_sono" -> integrazioni.doveSono()
+            "promemoria" -> creaPromemoria(a.optString("testo"), a.optString("giorno", "oggi"), a.optString("ora"), a.optString("ripeti", "no"))
+            "promemoria_luogo" -> creaPromemoriaLuogo(a.optString("testo"), a.optString("luogo"), a.optString("quando", "arrivo"))
+            "elenca_promemoria" -> Promemoria.descrivi(ctx)
+            "cancella_promemoria" -> Promemoria.elimina(ctx, a.optString("parola"))
+            "guarda" -> guarda(a.optString("domanda"))
+            "riepilogo_giornata" -> riepilogoGiornata()
             else -> "Strumento sconosciuto: $nome"
         }
     }
@@ -1270,6 +1392,121 @@ class Cervello private constructor(private val ctx: Context) {
             ?: return "Ho preparato il messaggio su WhatsApp per $contatto: premi invia. Attiva il controllo delle app e lo invierò io."
         return if (acc.toccaInvioWhatsapp()) "Messaggio WhatsApp inviato a $contatto." else
             "Ho preparato il messaggio su WhatsApp per $contatto ma non trovo il tasto invia: premilo tu."
+    }
+
+    // ---------- promemoria ----------
+
+    private fun creaPromemoria(testo: String, giorno: String, ora: String, ripeti: String): String {
+        val data = integrazioni.interpretaData(giorno) ?: return "Non ho capito il giorno \"$giorno\"."
+        val (h, m) = integrazioni.interpretaOra(ora) ?: return "Non ho capito l'ora \"$ora\"."
+        data.set(java.util.Calendar.HOUR_OF_DAY, h)
+        data.set(java.util.Calendar.MINUTE, m)
+        return Promemoria.aggiungiOrario(ctx, testo, data, ripeti)
+    }
+
+    private fun creaPromemoriaLuogo(testo: String, luogo: String, quando: String): String {
+        Promemoria.permessiPosizioneMancanti(ctx)?.let { return chiediPermessoGenerico(it, "usare la posizione") }
+        val (nome, lat, lon) = integrazioni.coordinate(luogo)
+            ?: return "Non conosco il luogo \"$luogo\". Puoi salvarlo, ad esempio dicendo: salva questo posto come casa."
+        return Promemoria.aggiungiLuogo(ctx, testo, nome, lat, lon, quando)
+    }
+
+    // ---------- vista: foto descritte da Claude o Gemini ----------
+
+    private fun guarda(domanda: String): String {
+        val schermata = uscita ?: return "Per mostrarmi qualcosa apri l'app Jarvis e chiedimelo da lì."
+        val cartella = File(ctx.cacheDir, "foto").apply { mkdirs() }
+        val file = File(cartella, "vista.jpg")
+        file.delete()
+        val attesa = CountDownLatch(1)
+        var riuscita = false
+        principale.post {
+            schermata.scattaFoto(file) { esito ->
+                riuscita = esito
+                attesa.countDown()
+            }
+        }
+        if (!attesa.await(120, TimeUnit.SECONDS) || !riuscita || !file.exists()) return "Non ho ricevuto nessuna foto."
+        val immagine = immagineBase64(file) ?: return "Non riesco a leggere la foto."
+        val richiesta = "Sei gli occhi di un assistente vocale. L'utente chiede: \"${domanda.ifBlank { "cosa vedi?" }}\". " +
+            "Descrivi in italiano quello che vedi nella foto, in modo utile e concreto. Se ci sono testi, trascrivili; " +
+            "se l'utente chiede una traduzione, traducili in italiano. Al massimo 6 frasi."
+        return try {
+            "Nella foto: " + if (usaClaude()) visioneClaude(immagine, richiesta) else visioneGemini(immagine, richiesta)
+        } catch (e: Exception) {
+            "Non sono riuscito ad analizzare la foto: ${e.message}"
+        }
+    }
+
+    /** Riduce la foto a 1280 pixel al massimo e la codifica in base64 (meno dati, meno costi). */
+    private fun immagineBase64(file: File): String? = try {
+        val dimensioni = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        android.graphics.BitmapFactory.decodeFile(file.absolutePath, dimensioni)
+        var riduzione = 1
+        while (maxOf(dimensioni.outWidth, dimensioni.outHeight) / (riduzione * 2) >= 1280) riduzione *= 2
+        val immagine = android.graphics.BitmapFactory.decodeFile(
+            file.absolutePath, android.graphics.BitmapFactory.Options().apply { inSampleSize = riduzione }
+        )
+        val flusso = java.io.ByteArrayOutputStream()
+        immagine.compress(android.graphics.Bitmap.CompressFormat.JPEG, 80, flusso)
+        android.util.Base64.encodeToString(flusso.toByteArray(), android.util.Base64.NO_WRAP)
+    } catch (e: Exception) {
+        null
+    }
+
+    private fun visioneGemini(base64: String, richiesta: String): String {
+        val modello = prefs.getString("modello", MODELLO_PREDEFINITO) ?: MODELLO_PREDEFINITO
+        val contenuto = JSONArray()
+            .put(JSONObject().put("type", "text").put("text", richiesta))
+            .put(JSONObject().put("type", "image_url").put("image_url", JSONObject().put("url", "data:image/jpeg;base64,$base64")))
+        val corpo = JSONObject()
+            .put("model", modello)
+            .put("messages", JSONArray().put(JSONObject().put("role", "user").put("content", contenuto)))
+        val messaggio = postGemini(corpo).getJSONArray("choices").getJSONObject(0).getJSONObject("message")
+        return if (messaggio.isNull("content")) "niente di riconoscibile." else messaggio.getString("content").trim()
+    }
+
+    private fun visioneClaude(base64: String, richiesta: String): String {
+        val modello = modelloClaude()
+        val contenuto = JSONArray()
+            .put(JSONObject().put("type", "image").put("source", JSONObject()
+                .put("type", "base64").put("media_type", "image/jpeg").put("data", base64)))
+            .put(JSONObject().put("type", "text").put("text", richiesta))
+        val corpo = JSONObject()
+            .put("model", modello)
+            .put("max_tokens", 600)
+            .put("messages", JSONArray().put(JSONObject().put("role", "user").put("content", contenuto)))
+        if (modello.contains("haiku")) corpo.put("thinking", JSONObject().put("type", "disabled"))
+        val blocchi = postClaude(corpo).optJSONArray("content") ?: return "niente di riconoscibile."
+        return (0 until blocchi.length()).mapNotNull { blocchi.optJSONObject(it) }
+            .filter { it.optString("type") == "text" }.joinToString(" ") { it.optString("text") }.trim()
+    }
+
+    // ---------- riepilogo del mattino ----------
+
+    fun riepilogoGiornata(): String {
+        val parti = mutableListOf<String>()
+        parti.add("Oggi è " + SimpleDateFormat("EEEE d MMMM", Locale.ITALIAN).format(Date()) + ".")
+        if (prefs.getBoolean("mattino_meteo", true)) {
+            try { parti.add("Meteo: " + meteo("", "oggi")) } catch (e: Exception) { }
+        }
+        if (prefs.getBoolean("mattino_calendario", true) &&
+            (Build.VERSION.SDK_INT < 23 || ctx.checkSelfPermission(Manifest.permission.READ_CALENDAR) == PackageManager.PERMISSION_GRANTED)
+        ) {
+            try { parti.add(integrazioni.leggiCalendario("oggi", 1)) } catch (e: Exception) { }
+        }
+        if (prefs.getBoolean("mattino_promemoria", true)) {
+            val oggi = Promemoria.promemoriaDiOggi(ctx)
+            if (oggi.isNotEmpty()) parti.add("Promemoria di oggi: " + oggi.joinToString("; "))
+        }
+        if (prefs.getBoolean("mattino_messaggi", true) && NotificheJarvis.abilitato(ctx)) {
+            parti.add("Messaggi ricevuti: " + NotificheJarvis.leggi(ctx, ""))
+        }
+        if (prefs.getBoolean("mattino_notizie", true)) {
+            val categoria = prefs.getString("mattino_categoria", "principali") ?: "principali"
+            parti.add(integrazioni.notizie(categoria, "", 5))
+        }
+        return parti.joinToString("\n\n")
     }
 
     // ---------- meteo (Open-Meteo, gratuito e senza chiave) ----------

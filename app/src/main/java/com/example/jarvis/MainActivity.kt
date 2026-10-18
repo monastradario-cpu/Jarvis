@@ -18,7 +18,10 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.AlarmClock
+import android.provider.MediaStore
 import android.provider.Settings
+import androidx.core.content.FileProvider
+import java.io.File
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
@@ -48,7 +51,6 @@ import android.widget.ScrollView
 import android.widget.TextView
 import org.json.JSONArray
 import org.json.JSONObject
-import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
@@ -175,8 +177,13 @@ class MainActivity : Activity(), Cervello.Uscita {
         controllaRichiestaAscolto(intent)
     }
 
-    /** Aperta dalla tessera rapida o dalla notifica: inizia subito ad ascoltare. */
+    /** Aperta dalla tessera rapida o dalla notifica: inizia subito ad ascoltare, o legge il riepilogo. */
     private fun controllaRichiestaAscolto(intento: Intent?) {
+        if (intento?.getBooleanExtra("riepilogo", false) == true) {
+            intento.removeExtra("riepilogo")
+            reattore.postDelayed({ gestisciRichiesta("Buongiorno. Fammi il riepilogo del mattino.") }, 600)
+            return
+        }
         if (intento?.getBooleanExtra("ascolta", false) == true) {
             intento.removeExtra("ascolta")
             reattore.postDelayed({ iniziaAscolto() }, 500)
@@ -207,6 +214,39 @@ class MainActivity : Activity(), Cervello.Uscita {
 
     override fun chiediPermesso(permesso: String) {
         if (Build.VERSION.SDK_INT >= 23) requestPermissions(arrayOf(permesso), CODICE_CONTATTI)
+    }
+
+    private val CODICE_FOTO = 10
+    private var alTermineFoto: ((Boolean) -> Unit)? = null
+    private var fileFoto: File? = null
+
+    override fun scattaFoto(file: File, alTermine: (Boolean) -> Unit) {
+        alTermineFoto = alTermine
+        fileFoto = file
+        try {
+            val uri = FileProvider.getUriForFile(this, "$packageName.file", file)
+            val intento = Intent(MediaStore.ACTION_IMAGE_CAPTURE)
+                .putExtra(MediaStore.EXTRA_OUTPUT, uri)
+                .addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION or Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            @Suppress("DEPRECATION")
+            startActivityForResult(intento, CODICE_FOTO)
+            stato.text = "Inquadra e scatta la foto"
+        } catch (e: Exception) {
+            alTermineFoto = null
+            alTermine(false)
+        }
+    }
+
+    @Deprecated("Risultato della fotocamera")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        @Suppress("DEPRECATION")
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == CODICE_FOTO) {
+            val ok = resultCode == RESULT_OK && (fileFoto?.length() ?: 0L) > 0L
+            stato.text = if (ok) "Guardo la foto..." else ""
+            alTermineFoto?.invoke(ok)
+            alTermineFoto = null
+        }
     }
 
     override fun nuovoScambio(domanda: String, risposta: String, fonti: List<String>) {
@@ -498,7 +538,7 @@ class MainActivity : Activity(), Cervello.Uscita {
     //  MENU RADIALE E SOTTOMENÙ
     // ================================================================
 
-    private val VOCI_MENU = listOf("CERVELLO", "CARATTERE", "VOCE", "PLUGIN", "ATTIVO", "ASPETTO")
+    private val VOCI_MENU = listOf("CERVELLO", "CARATTERE", "VOCE", "PLUGIN", "ATTIVO", "MATTINO", "ASPETTO")
     private var menuRadiale: MenuRadialeView? = null
 
     /** Apre il menu radiale attorno alla sfera. */
@@ -514,6 +554,7 @@ class MainActivity : Activity(), Cervello.Uscita {
                     2 -> mostraVoce()
                     3 -> mostraPlugin()
                     4 -> mostraSempreAttivo()
+                    5 -> mostraMattino()
                     else -> mostraAspetto()
                 }
             },
@@ -843,6 +884,64 @@ class MainActivity : Activity(), Cervello.Uscita {
         }
     }
 
+    // ---------- MATTINO ----------
+    private fun mostraMattino() {
+        val pagina = Pagina("Mattino")
+        pagina.nota("Ogni mattina, all'ora scelta, Jarvis ti fa il riepilogo della giornata. " +
+            "Se è sempre attivo lo legge a voce, altrimenti ti manda una notifica.")
+        val attivo = pagina.casella("Riepilogo automatico ogni mattina", prefs.getBoolean("mattino_attivo", false))
+        val ora = pagina.campo("Ora (HH:MM)", prefs.getString("mattino_ora", "07:30") ?: "07:30")
+        pagina.titoloSezione("Cosa includere")
+        val meteo = pagina.casella("Meteo", prefs.getBoolean("mattino_meteo", true))
+        val calendario = pagina.casella("Impegni del calendario", prefs.getBoolean("mattino_calendario", true))
+        val promemoria = pagina.casella("Promemoria di oggi", prefs.getBoolean("mattino_promemoria", true))
+        val messaggi = pagina.casella("Messaggi ricevuti", prefs.getBoolean("mattino_messaggi", true))
+        val notizie = pagina.casella("Notizie", prefs.getBoolean("mattino_notizie", true))
+        pagina.titoloSezione("Notizie da leggere")
+        val categoria = pagina.scelta(
+            listOf(
+                "principali" to "Principali",
+                "cronaca" to "Cronaca",
+                "politica" to "Politica",
+                "economia" to "Economia",
+                "mondo" to "Mondo",
+                "sport" to "Sport",
+                "tecnologia" to "Tecnologia"
+            ),
+            prefs.getString("mattino_categoria", "principali") ?: "principali"
+        )
+        pagina.bottone("Fammi sentire il riepilogo adesso") {
+            gestisciRichiesta("Fammi il riepilogo del mattino.")
+        }
+        pagina.titoloSezione("Ricerca Google (facoltativa)")
+        pagina.nota("Gratis Jarvis usa ANSA, Google News e Wikipedia. Con il piano a pagamento di Gemini puoi attivare " +
+            "la ricerca Google vera: include 5.000 ricerche gratuite al mese. Col piano gratuito lascia spento.")
+        val ricercaGoogle = pagina.casella("Usa la ricerca Google di Gemini", prefs.getBoolean("ricerca_google", false))
+        pagina.mostra {
+            val orario = ora.text.toString().trim().replace(".", ":")
+            val valido = Regex("^([01]?\\d|2[0-3]):[0-5]\\d$").matches(orario)
+            prefs.edit()
+                .putBoolean("mattino_attivo", attivo.isChecked)
+                .putString("mattino_ora", if (valido) orario else "07:30")
+                .putBoolean("mattino_meteo", meteo.isChecked)
+                .putBoolean("mattino_calendario", calendario.isChecked)
+                .putBoolean("mattino_promemoria", promemoria.isChecked)
+                .putBoolean("mattino_messaggi", messaggi.isChecked)
+                .putBoolean("mattino_notizie", notizie.isChecked)
+                .putString("mattino_categoria", categoria())
+                .putBoolean("ricerca_google", ricercaGoogle.isChecked)
+                .apply()
+            Promemoria.programmaRiepilogo(this)
+            if (attivo.isChecked) {
+                aggiungiAlRegistro("Jarvis", "Riepilogo del mattino programmato alle ${if (valido) orario else "07:30"}." +
+                    if (!valido) " L'ora che hai scritto non era valida." else "")
+                if (Build.VERSION.SDK_INT >= 33 &&
+                    checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+                ) requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 4)
+            }
+        }
+    }
+
     // ---------- ASPETTO ----------
     private fun mostraAspetto() {
         val pagina = Pagina("Aspetto")
@@ -894,6 +993,15 @@ class MainActivity : Activity(), Cervello.Uscita {
                 testo.append("• ${r.optString("nome")} (\"${r.optString("frase")}\"): ${r.optString("istruzioni")}\n")
             }
         }
+        testo.append("\nPROMEMORIA\n").append(Promemoria.descrivi(this)).append("\n")
+        val luoghi = prefs.getString("luoghi", "[]") ?: "[]"
+        testo.append("\nLUOGHI SALVATI\n").append(
+            try {
+                val a = org.json.JSONArray(luoghi)
+                if (a.length() == 0) "Nessuno. Prova: \"salva questo posto come casa\".\n"
+                else (0 until a.length()).joinToString("\n") { "• ${a.getJSONObject(it).optString("nome")}: ${a.getJSONObject(it).optString("indirizzo")}" } + "\n"
+            } catch (e: Exception) { "\n" }
+        )
         testo.append("\nRIASSUNTO DELLE CONVERSAZIONI PASSATE\n")
         testo.append(riassunto.ifBlank { "Ancora vuoto: si crea quando la conversazione diventa lunga." }).append("\n")
         testo.append("\nDIARIO\n$richieste richieste salvate sul telefono.")

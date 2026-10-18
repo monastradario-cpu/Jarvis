@@ -54,4 +54,9 @@ dependencies {
         exclude(group = "net.java.dev.jna")
     }
     implementation("net.java.dev.jna:jna:5.13.0@aar")
+
+    // Foto condivise con l'app Fotocamera
+    implementation("androidx.core:core:1.13.1")
+    // Posizione e promemoria di luogo
+    implementation("com.google.android.gms:play-services-location:21.3.0")
 }

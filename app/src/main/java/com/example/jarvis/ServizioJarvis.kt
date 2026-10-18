@@ -39,6 +39,8 @@ class ServizioJarvis : Service() {
         const val AZIONE_PAUSA = "com.example.jarvis.PAUSA"
         const val AZIONE_RIPRENDI = "com.example.jarvis.RIPRENDI"
         const val AZIONE_FERMA = "com.example.jarvis.FERMA"
+        const val AZIONE_RIEPILOGO = "com.example.jarvis.RIEPILOGO"
+        const val AZIONE_DI = "com.example.jarvis.DI"
 
         private const val CANALE = "jarvis_sempre_attivo"
         private const val ID_NOTIFICA = 7
@@ -50,6 +52,16 @@ class ServizioJarvis : Service() {
                 if (Build.VERSION.SDK_INT >= 26) ctx.startForegroundService(intento) else ctx.startService(intento)
             } catch (e: Exception) {
                 // Android non permette di avviarlo in questo momento
+            }
+        }
+
+        /** Fa dire una frase a Jarvis (per esempio un promemoria). */
+        fun dici(ctx: Context, testo: String) {
+            if (!attivo) return
+            try {
+                ctx.startService(Intent(ctx, ServizioJarvis::class.java).setAction(AZIONE_DI).putExtra("testo", testo))
+            } catch (e: Exception) {
+                // il servizio non è raggiungibile
             }
         }
 
@@ -117,6 +129,22 @@ class ServizioJarvis : Service() {
             AZIONE_RIPRENDI -> {
                 inPausa = false
                 if (!occupato) riprendiAttesa()
+            }
+            AZIONE_RIEPILOGO -> {
+                if (!occupato) {
+                    occupato = true
+                    fermaParola()
+                    pensa("Buongiorno. Fammi il riepilogo del mattino.")
+                }
+            }
+            AZIONE_DI -> {
+                val testo = intent.getStringExtra("testo").orEmpty()
+                if (testo.isNotBlank() && !occupato) {
+                    occupato = true
+                    fermaParola()
+                    continuaDopo = false
+                    parla(testo)
+                }
             }
             AZIONE_FERMA -> {
                 cervello.prefs.edit().putBoolean("sempre_attivo", false).apply()
