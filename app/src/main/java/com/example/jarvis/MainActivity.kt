@@ -34,6 +34,8 @@ import android.view.inputmethod.EditorInfo
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
+import android.widget.RadioButton
+import android.widget.RadioGroup
 import android.widget.ScrollView
 import android.widget.TextView
 import org.json.JSONArray
@@ -52,15 +54,21 @@ import kotlin.math.roundToInt
  * JARVIS per Android
  * - Orecchie: riconoscimento vocale di Android (italiano)
  * - Bocca:    sintesi vocale di Android (italiano)
- * - Cervello: Gemini (o qualsiasi API compatibile OpenAI)
+ * - Cervello: Claude di Anthropic (oppure Gemini di Google, a scelta)
  * - Poteri:   app, siti, ricerche, sveglie, timer, torcia, chiamate, SMS,
  *             meteo, volume, musica, note e memoria
  */
 class MainActivity : Activity() {
 
     // ---------------- IMPOSTAZIONI PREDEFINITE ----------------
+    // Claude (Anthropic) - cervello principale
+    private val URL_CLAUDE = "https://api.anthropic.com/v1/messages"
+    private val MODELLO_CLAUDE_PREDEFINITO = "claude-haiku-5-5"
+
+    // Gemini (Google) - alternativa gratuita
     private val URL_PREDEFINITO = "https://generativelanguage.googleapis.com/v1beta/openai"
     private val MODELLO_PREDEFINITO = "gemini-3.5-flash-lite"
+
     private val CITTA_PREDEFINITA = "Roma"
 
     private val CODICE_MIC = 1
@@ -86,7 +94,14 @@ class MainActivity : Activity() {
     private var inAscolto = false
     @Volatile private var occupato = false
 
-    private val messaggi = JSONArray()
+    private val messaggi = JSONArray()        // conversazione con Gemini (formato OpenAI)
+    private val messaggiClaude = JSONArray()  // conversazione con Claude (formato Anthropic)
+
+    private fun usaClaude() = prefs.getString("fornitore", "claude") != "gemini"
+
+    private fun chiaveAttiva(): String =
+        (if (usaClaude()) prefs.getString("chiave_claude", "") else prefs.getString("api_key", ""))
+            ?.trim() ?: ""
 
     // ================================================================
     //  AVVIO
@@ -103,7 +118,7 @@ class MainActivity : Activity() {
             }
         }
 
-        if (prefs.getString("api_key", "").isNullOrBlank()) {
+        if (chiaveAttiva().isEmpty()) {
             aggiungiAlRegistro("Jarvis", "Benvenuto! Prima inserisci la tua chiave API nelle impostazioni.")
             mostraImpostazioni()
         } else {
@@ -283,23 +298,68 @@ class MainActivity : Activity() {
             return casella
         }
 
-        val chiave = campo("Chiave API", prefs.getString("api_key", "") ?: "", true)
-        val modello = campo("Modello", prefs.getString("modello", MODELLO_PREDEFINITO) ?: MODELLO_PREDEFINITO)
-        val indirizzo = campo("Indirizzo API", prefs.getString("base_url", URL_PREDEFINITO) ?: URL_PREDEFINITO)
+        fun titoloSezione(testo: String) {
+            contenitore.addView(TextView(this).apply {
+                text = testo
+                textSize = 16f
+                setTypeface(typeface, Typeface.BOLD)
+                setPadding(0, dp(18), 0, 0)
+            })
+        }
+
+        // Scelta del cervello
+        titoloSezione("Cervello di Jarvis")
+        val sceltaClaude = RadioButton(this).apply { text = "Claude (Anthropic)"; id = View.generateViewId() }
+        val sceltaGemini = RadioButton(this).apply { text = "Gemini (Google, gratuito)"; id = View.generateViewId() }
+        val gruppo = RadioGroup(this).apply {
+            orientation = RadioGroup.VERTICAL
+            addView(sceltaClaude)
+            addView(sceltaGemini)
+            check(if (usaClaude()) sceltaClaude.id else sceltaGemini.id)
+        }
+        contenitore.addView(gruppo)
+
+        titoloSezione("Claude")
+        contenitore.addView(TextView(this).apply {
+            text = "Chiave su platform.claude.com (a pagamento, pochi centesimi al mese)"
+            setPadding(0, dp(4), 0, 0)
+        })
+        val chiaveClaude = campo("Chiave API Claude", prefs.getString("chiave_claude", "") ?: "", true)
+        val modelloClaude = campo(
+            "Modello Claude",
+            prefs.getString("modello_claude", MODELLO_CLAUDE_PREDEFINITO) ?: MODELLO_CLAUDE_PREDEFINITO
+        )
+
+        titoloSezione("Gemini")
+        contenitore.addView(TextView(this).apply {
+            text = "Chiave gratuita su aistudio.google.com/apikey"
+            setPadding(0, dp(4), 0, 0)
+        })
+        val chiaveGemini = campo("Chiave API Gemini", prefs.getString("api_key", "") ?: "", true)
+        val modelloGemini = campo("Modello Gemini", prefs.getString("modello", MODELLO_PREDEFINITO) ?: MODELLO_PREDEFINITO)
+
+        titoloSezione("Altro")
         val citta = campo("Città per il meteo", prefs.getString("citta", CITTA_PREDEFINITA) ?: CITTA_PREDEFINITA)
 
         AlertDialog.Builder(this)
             .setTitle("Impostazioni")
-            .setMessage("Chiave gratuita su: aistudio.google.com/apikey")
             .setView(ScrollView(this).apply { addView(contenitore) })
             .setPositiveButton("Salva") { _, _ ->
+                val nuovoFornitore = if (gruppo.checkedRadioButtonId == sceltaGemini.id) "gemini" else "claude"
                 prefs.edit()
-                    .putString("api_key", chiave.text.toString().trim())
-                    .putString("modello", modello.text.toString().trim().ifBlank { MODELLO_PREDEFINITO })
-                    .putString("base_url", indirizzo.text.toString().trim().ifBlank { URL_PREDEFINITO })
+                    .putString("fornitore", nuovoFornitore)
+                    .putString("chiave_claude", chiaveClaude.text.toString().trim())
+                    .putString("modello_claude", modelloClaude.text.toString().trim().ifBlank { MODELLO_CLAUDE_PREDEFINITO })
+                    .putString("api_key", chiaveGemini.text.toString().trim())
+                    .putString("modello", modelloGemini.text.toString().trim().ifBlank { MODELLO_PREDEFINITO })
                     .putString("citta", citta.text.toString().trim().ifBlank { CITTA_PREDEFINITA })
                     .apply()
-                aggiungiAlRegistro("Jarvis", "Impostazioni salvate. Tocca il microfono e parla.")
+                val nome = if (nuovoFornitore == "claude") "Claude" else "Gemini"
+                if (chiaveAttiva().isEmpty()) {
+                    aggiungiAlRegistro("Jarvis", "Manca la chiave API di $nome: aggiungila nelle impostazioni.")
+                } else {
+                    aggiungiAlRegistro("Jarvis", "Impostazioni salvate, uso $nome. Tocca il microfono e parla.")
+                }
             }
             .setNegativeButton("Annulla", null)
             .show()
@@ -417,7 +477,7 @@ class MainActivity : Activity() {
 
     private fun gestisciRichiesta(testo: String) {
         if (occupato) return
-        if (prefs.getString("api_key", "").isNullOrBlank()) {
+        if (chiaveAttiva().isEmpty()) {
             mostraImpostazioni()
             return
         }
@@ -427,7 +487,7 @@ class MainActivity : Activity() {
 
         Thread {
             val risposta = try {
-                conversa(testo)
+                if (usaClaude()) conversaClaude(testo) else conversa(testo)
             } catch (e: Exception) {
                 "Scusa, c'è stato un problema: ${e.message}"
             }
@@ -550,6 +610,11 @@ class MainActivity : Activity() {
     }
 
     private fun aggiornaPromptDiSistema() {
+        val sistema = JSONObject().put("role", "system").put("content", promptDiSistema())
+        if (messaggi.length() == 0) messaggi.put(sistema) else messaggi.put(0, sistema)
+    }
+
+    private fun promptDiSistema(): String {
         val adesso = SimpleDateFormat("EEEE d MMMM yyyy, 'ore' HH:mm", Locale.ITALIAN).format(Date())
         val citta = prefs.getString("citta", CITTA_PREDEFINITA) ?: CITTA_PREDEFINITA
         val memoria = leggiMemoria()
@@ -562,9 +627,7 @@ class MainActivity : Activity() {
         if (memoria.isNotEmpty()) {
             testo += " Cose che sai sull'utente: " + memoria.joinToString("; ") + "."
         }
-
-        val sistema = JSONObject().put("role", "system").put("content", testo)
-        if (messaggi.length() == 0) messaggi.put(sistema) else messaggi.put(0, sistema)
+        return testo
     }
 
     private fun accorciaStorico(massimo: Int = 24) {
@@ -575,6 +638,136 @@ class MainActivity : Activity() {
         for (i in inizio until messaggi.length()) nuovi.put(messaggi.get(i))
         while (messaggi.length() > 0) messaggi.remove(messaggi.length() - 1)
         for (i in 0 until nuovi.length()) messaggi.put(nuovi.get(i))
+    }
+
+    // ================================================================
+    //  CERVELLO CLAUDE (API nativa di Anthropic)
+    // ================================================================
+
+    private fun conversaClaude(testo: String): String {
+        val lunghezzaIniziale = messaggiClaude.length()
+        try {
+            messaggiClaude.put(JSONObject().put("role", "user").put("content", testo))
+
+            repeat(6) {
+                val risposta = chiamaClaude()
+                val contenuto = risposta.optJSONArray("content") ?: JSONArray()
+                if (contenuto.length() == 0) {
+                    contenuto.put(JSONObject().put("type", "text").put("text", "Fatto."))
+                }
+                // Il messaggio di Claude va rimandato così com'è (anche i blocchi di ragionamento)
+                messaggiClaude.put(JSONObject().put("role", "assistant").put("content", contenuto))
+
+                val testi = StringBuilder()
+                val risultati = JSONArray()
+                for (i in 0 until contenuto.length()) {
+                    val blocco = contenuto.getJSONObject(i)
+                    when (blocco.optString("type")) {
+                        "text" -> testi.append(blocco.optString("text")).append(' ')
+                        "tool_use" -> {
+                            val nome = blocco.optString("name")
+                            val argomenti = blocco.optJSONObject("input") ?: JSONObject()
+                            val risultato = try {
+                                eseguiStrumento(nome, argomenti)
+                            } catch (e: Exception) {
+                                "Errore durante $nome: ${e.message}"
+                            }
+                            risultati.put(
+                                JSONObject()
+                                    .put("type", "tool_result")
+                                    .put("tool_use_id", blocco.optString("id"))
+                                    .put("content", risultato)
+                            )
+                        }
+                    }
+                }
+
+                if (risultati.length() == 0) {
+                    accorciaStoricoClaude()
+                    return testi.toString().trim().ifBlank { "Fatto." }
+                }
+                messaggiClaude.put(JSONObject().put("role", "user").put("content", risultati))
+            }
+            return "Ci ho messo troppi passaggi, prova a chiedermelo in modo più semplice."
+        } catch (e: Exception) {
+            while (messaggiClaude.length() > lunghezzaIniziale) messaggiClaude.remove(messaggiClaude.length() - 1)
+            throw e
+        }
+    }
+
+    private fun chiamaClaude(): JSONObject {
+        val modello = (prefs.getString("modello_claude", MODELLO_CLAUDE_PREDEFINITO) ?: MODELLO_CLAUDE_PREDEFINITO).trim()
+        val chiave = (prefs.getString("chiave_claude", "") ?: "").trim()
+
+        // Strumenti nel formato di Anthropic: name, description, input_schema
+        val strumenti = JSONArray()
+        val definizioni = definizioniStrumenti()
+        for (i in 0 until definizioni.length()) {
+            val funzione = definizioni.getJSONObject(i).getJSONObject("function")
+            strumenti.put(
+                JSONObject()
+                    .put("name", funzione.getString("name"))
+                    .put("description", funzione.getString("description"))
+                    .put("input_schema", funzione.getJSONObject("parameters"))
+            )
+        }
+
+        val corpo = JSONObject()
+            .put("model", modello)
+            .put("max_tokens", 1024)
+            .put("system", promptDiSistema())
+            .put("messages", messaggiClaude)
+            .put("tools", strumenti)
+        // Su Haiku spegniamo il ragionamento lungo: risposte più rapide, ideali per la voce
+        if (modello.contains("haiku")) {
+            corpo.put("thinking", JSONObject().put("type", "disabled"))
+        }
+
+        val connessione = URL(URL_CLAUDE).openConnection() as HttpURLConnection
+        connessione.requestMethod = "POST"
+        connessione.connectTimeout = 15000
+        connessione.readTimeout = 90000
+        connessione.doOutput = true
+        connessione.setRequestProperty("Content-Type", "application/json; charset=utf-8")
+        connessione.setRequestProperty("x-api-key", chiave)
+        connessione.setRequestProperty("anthropic-version", "2023-06-01")
+        connessione.outputStream.use { it.write(corpo.toString().toByteArray(Charsets.UTF_8)) }
+
+        val codice = connessione.responseCode
+        val flusso = if (codice in 200..299) connessione.inputStream else connessione.errorStream
+        val risposta = flusso?.bufferedReader(Charsets.UTF_8)?.use { it.readText() } ?: ""
+        connessione.disconnect()
+
+        if (codice !in 200..299) {
+            val dettaglio = estraiErrore(risposta)
+            throw Exception(
+                when {
+                    dettaglio.contains("credit balance", ignoreCase = true) ->
+                        "il credito API di Claude è esaurito, ricaricalo su platform.claude.com."
+                    codice == 401 || codice == 403 -> "la chiave API di Claude non è valida, controllala nelle impostazioni."
+                    codice == 404 -> "modello Claude non trovato, controlla il nome nelle impostazioni."
+                    codice == 429 -> "troppe richieste in poco tempo, riprova tra qualche secondo."
+                    codice == 529 || codice >= 500 -> "i server di Claude sono occupati, riprova tra poco."
+                    else -> "errore $codice. $dettaglio"
+                }
+            )
+        }
+        return JSONObject(risposta)
+    }
+
+    private fun accorciaStoricoClaude(massimo: Int = 24) {
+        if (messaggiClaude.length() <= massimo) return
+        var inizio = messaggiClaude.length() - massimo
+        // Ripartiamo da una domanda dell'utente (non da un risultato di uno strumento)
+        while (inizio < messaggiClaude.length()) {
+            val m = messaggiClaude.getJSONObject(inizio)
+            if (m.optString("role") == "user" && m.opt("content") is String) break
+            inizio++
+        }
+        val nuovi = JSONArray()
+        for (i in inizio until messaggiClaude.length()) nuovi.put(messaggiClaude.get(i))
+        while (messaggiClaude.length() > 0) messaggiClaude.remove(messaggiClaude.length() - 1)
+        for (i in 0 until nuovi.length()) messaggiClaude.put(nuovi.get(i))
     }
 
     // ================================================================
