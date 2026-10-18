@@ -31,7 +31,18 @@ Apri la sezione **Releases**, scarica **Jarvis.apk** dall'ultima versione e inst
 - **Aspetto**: 8 colori più tonalità libera, 7 forme del nucleo, 5 stili, 3 sfondi, editor dal vivo;
   zoom con due dita, anelli da far girare col dito, onde di luce al tocco
 
+## Novità della versione 3
+- **Aggiornamento automatico**: Jarvis avvisa quando c'è una versione nuova e la installa con un tocco
+- **Voce neurale offline** (Piper): Miro, Paola, Riccardo o Dii, da scaricare in VOCE
+- **Automazioni** create a voce: "quando arrivo a casa accendi le luci", "ogni sera alle 23 metti il non disturbare"
+- **Non disturbare, suoneria e luminosità** a voce
+- **Condividi → Jarvis: chiedi** per riassumere, tradurre o spiegare testi, link, foto, PDF e messaggi vocali
+- **Traduttore simultaneo** con lo schermo diviso tra le due persone
+- **Nome libero** dell'assistente e **voci della famiglia** riconosciute
+- **Resoconto della settimana** la domenica sera, **modalità privata**, **liste** della spesa da mandare su WhatsApp
+
 ## Sicurezza
+- Chiavi API, password e token sono cifrati con il chip di sicurezza del telefono (Android Keystore)
 - Gli acquisti richiedono sempre due conferme (controllo nel codice, non aggirabile dall'IA)
 - La cancellazione di appuntamenti richiede due conferme
 - Chiavi API e password restano solo sul telefono e non finiscono nei backup
