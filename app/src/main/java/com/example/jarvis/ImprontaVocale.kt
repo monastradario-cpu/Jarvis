@@ -52,16 +52,32 @@ object ImprontaVocale {
     //  CARICAMENTO DEI MODELLI (una volta sola, condivisi da app e servizio)
     // ================================================================
 
+    private val inAttesa = mutableListOf<(Model?) -> Unit>()
+    private var caricando = false
+
+    /** Prepara il modello una volta sola, anche se lo chiedono insieme l'app e il servizio. */
     fun carica(ctx: Context, pronto: (Model?) -> Unit) {
         modello?.let { pronto(it); return }
+        synchronized(inAttesa) {
+            inAttesa.add(pronto)
+            if (caricando) return
+            caricando = true
+        }
+        fun avvisa(m: Model?) {
+            val chi = synchronized(inAttesa) {
+                caricando = false
+                inAttesa.toList().also { inAttesa.clear() }
+            }
+            chi.forEach { principale.post { it(m) } }
+        }
         StorageService.unpack(
             ctx.applicationContext, CARTELLA_MODELLO, "model",
             { m: Model ->
                 modello = m
                 caricaModelloVoce(ctx.applicationContext)
-                pronto(m)
+                avvisa(m)
             },
-            { _: java.io.IOException -> pronto(null) }
+            { _: java.io.IOException -> avvisa(null) }
         )
     }
 

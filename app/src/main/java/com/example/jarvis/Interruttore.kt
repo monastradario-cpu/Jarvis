@@ -89,15 +89,18 @@ object Interruttore {
             fun valuta(json: String?): Boolean {
                 val r = try { JSONObject(json ?: return false) } catch (e: Exception) { return false }
                 val parole = r.optJSONArray("result") ?: return false
+                // una parola detta da sola: la voce continua di Jarvis produce frasi lunghe, che vengono scartate
+                if (parole.length() > 3) return false
+                val voce = ImprontaVocale.verificaSePossibile(app, r)
+                if (voce == false) return false                       // non è la voce dell'utente
+                val minima = if (voce == true) 0.8 else 0.92           // senza voce registrata serve più sicurezza
                 var trovata: String? = null
                 for (i in 0 until parole.length()) {
                     val p = parole.optJSONObject(i) ?: continue
                     val w = p.optString("word")
-                    if ((w in PAROLE_STOP || w == "jarvis") && p.optDouble("conf", 0.0) >= 0.75) trovata = w
+                    if ((w in PAROLE_STOP || w == "jarvis") && p.optDouble("conf", 0.0) >= minima) trovata = w
                 }
                 val parola = trovata ?: return false
-                val voce = ImprontaVocale.verificaSePossibile(app, r)
-                if (voce == false) return false                       // non è la voce dell'utente
                 if (voce == null) {
                     // voce non registrata: ignoro la parola se Jarvis la sta pronunciando lui stesso
                     val sta = try { detto.toString().lowercase(Locale.ITALIAN) } catch (e: Exception) { "" }

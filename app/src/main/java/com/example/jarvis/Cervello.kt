@@ -165,6 +165,9 @@ class Cervello private constructor(private val ctx: Context) {
     @Volatile private var pezzoAttuale: ((String) -> Unit)? = null
     @Volatile private var pezziInviati = false
     @Volatile private var richiestaCorrente = ""
+    // Se lo streaming dà problemi con un fornitore, per questa sessione si torna alle risposte normali
+    @Volatile private var flussoGuasto = false
+    private fun usaFlusso() = !flussoGuasto && prefs.getBoolean("streaming", true)
 
     /**
      * Risponde a una richiesta. Va chiamata da un thread in background.
@@ -504,7 +507,10 @@ class Cervello private constructor(private val ctx: Context) {
     private fun conversaClaudeConRecupero(testo: String): String = try {
         conversaClaude(testo)
     } catch (e: ErroreApi) {
-        if (e.ripetibile && messaggiClaude.length() > 0) {
+        if (e.codice == 400 && usaFlusso() && !pezziInviati) {
+            flussoGuasto = true
+            conversaClaudeConRecupero(testo)
+        } else if (e.ripetibile && messaggiClaude.length() > 0) {
             svuota(messaggiClaude)
             conversaClaude(testo)
         } else {
@@ -627,7 +633,7 @@ class Cervello private constructor(private val ctx: Context) {
         // Su Haiku spegniamo il ragionamento lungo: risposte più rapide, ideali per la voce
         if (modello.contains("haiku")) corpo.put("thinking", JSONObject().put("type", "disabled"))
         val alPezzo = pezzoAttuale
-        if (alPezzo != null && prefs.getBoolean("streaming", true)) {
+        if (alPezzo != null && usaFlusso()) {
             try {
                 return postClaudeFlusso(corpo, alPezzo)
             } catch (e: ErroreApi) {
@@ -790,7 +796,11 @@ class Cervello private constructor(private val ctx: Context) {
     private fun conversaGeminiConRecupero(testo: String): String = try {
         conversa(testo)
     } catch (e: ErroreApi) {
-        if (e.codice == 400 && messaggi.length() > 1) {
+        if (e.codice == 400 && usaFlusso() && !pezziInviati) {
+            // forse la conversazione in streaming non piace al modello: riprovo in modo normale
+            flussoGuasto = true
+            conversaGeminiConRecupero(testo)
+        } else if (e.codice == 400 && messaggi.length() > 1) {
             svuota(messaggi)
             conversa(testo)
         } else {
@@ -857,7 +867,7 @@ class Cervello private constructor(private val ctx: Context) {
 
         val alPezzo = pezzoAttuale
         var inFlusso: JSONObject? = null
-        if (alPezzo != null && prefs.getBoolean("streaming", true)) {
+        if (alPezzo != null && usaFlusso()) {
             try {
                 inFlusso = postGeminiFlusso(corpo, alPezzo)
             } catch (e: ErroreApi) {
@@ -938,6 +948,7 @@ class Cervello private constructor(private val ctx: Context) {
                         var voce: JSONObject? = if (indice >= 0) perIndice[indice] else null
                         // stesso indice ma id diverso: è una chiamata nuova
                         if (voce != null && id.isNotEmpty() && voce.optString("id").isNotEmpty() && voce.optString("id") != id) voce = null
+                        if (voce == null && indice < 0 && id.isNotEmpty()) voce = chiamate.firstOrNull { it.optString("id") == id }
                         if (voce == null && indice < 0 && id.isEmpty()) voce = chiamate.lastOrNull()
                         if (voce == null) {
                             voce = JSONObject().put("id", id).put("type", "function")
