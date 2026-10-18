@@ -185,6 +185,7 @@ class MainActivity : Activity(), Cervello.Uscita {
             }
         }
         parlatore.ascoltatore = ascoltoVoce
+        mostraUltimoErrore()
         // Modelli vocali pronti in anticipo (per l'interruzione con "basta") e controlli proattivi
         if (permessoMicrofono()) ImprontaVocale.carica(this) { }
         Proattivo.programma(this)
@@ -1902,6 +1903,35 @@ class MainActivity : Activity(), Cervello.Uscita {
             .setPositiveButton("Vai all'impostazione") { _, _ -> apriImpostazione(impostazione) }
             .setNeutralButton("Apri info app") { _, _ ->
                 apriImpostazione(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName")))
+            }
+            .setNegativeButton("Chiudi", null)
+            .show()
+    }
+
+    /** Se l'ultima volta Jarvis si è chiuso per un errore, lo mostra e permette di copiarlo o mandarlo. */
+    private fun mostraUltimoErrore() {
+        val file = JarvisApp.errore(this)
+        if (prefs.getBoolean("neurale_guasta", false) && !file.exists()) {
+            prefs.edit().putBoolean("neurale_guasta", false).apply()
+            aggiungiAlRegistro("Jarvis", "La voce neurale non è riuscita a partire (${VoceNeurale.ultimoErrore.ifBlank { "errore del motore" }}): " +
+                "per ora uso la voce del telefono.")
+            return
+        }
+        if (!file.exists()) return
+        val testo = try { file.readText() } catch (e: Exception) { "" }
+        file.delete()
+        prefs.edit().putBoolean("neurale_guasta", false).apply()
+        if (testo.isBlank()) return
+        AlertDialog.Builder(this)
+            .setTitle("Jarvis si era chiuso per un errore")
+            .setMessage("Copia questo testo e mandamelo: mi serve per correggere il problema.\n\n" + testo.take(3000))
+            .setPositiveButton("Copia") { _, _ ->
+                (getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager)
+                    .setPrimaryClip(android.content.ClipData.newPlainText("Errore Jarvis", testo))
+                aggiungiAlRegistro("Jarvis", "Errore copiato: incollalo nella chat con Claude.")
+            }
+            .setNeutralButton("Condividi") { _, _ ->
+                startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, testo), "Manda l'errore"))
             }
             .setNegativeButton("Chiudi", null)
             .show()

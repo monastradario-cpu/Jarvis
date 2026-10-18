@@ -46,6 +46,13 @@ object VoceNeurale {
 
     private fun prefs(ctx: Context) = ctx.getSharedPreferences("jarvis", Context.MODE_PRIVATE)
 
+    /** Segna quando il motore nativo lavora: se l'app si chiude in quel momento, al riavvio si torna alla voce del telefono. */
+    private fun rischio(ctx: Context, attivo: Boolean) {
+        try { prefs(ctx).edit().putBoolean("neurale_rischio", attivo).commit() } catch (e: Exception) { }
+    }
+
+    @Volatile var ultimoErrore = ""
+
     private fun cartella(ctx: Context, id: String) = File(ctx.filesDir, "voci/$id")
 
     fun scaricata(ctx: Context, id: String) = File(cartella(ctx, id), "tokens.txt").exists()
@@ -105,9 +112,9 @@ object VoceNeurale {
             destinazione.deleteRecursively()
             temporanea.renameTo(destinazione)
             "Voce scaricata."
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             temporanea.deleteRecursively()
-            "Non riesco a scaricare la voce: ${e.message}"
+            "Non riesco a scaricare la voce: ${e.message ?: e.javaClass.simpleName}"
         }
     }
 
@@ -146,13 +153,17 @@ object VoceNeurale {
             ),
             maxNumSentences = 1
         )
+        rischio(ctx, true)
         return try {
             OfflineTts(null, config).also {
                 motore = it
                 caricata = id
             }
         } catch (e: Throwable) {
+            ultimoErrore = e.message ?: e.javaClass.simpleName
             null
+        } finally {
+            rischio(ctx, false)
         }
     }
 
@@ -178,8 +189,16 @@ object VoceNeurale {
         if (filo?.isAlive == true) return
         filo = Thread {
             while (true) {
-                val frase = coda.poll(30, java.util.concurrent.TimeUnit.SECONDS) ?: break
-                pronuncia(ctx, frase)
+                val frase = try { coda.poll(30, java.util.concurrent.TimeUnit.SECONDS) } catch (e: Throwable) { null } ?: break
+                try {
+                    pronuncia(ctx, frase)
+                } catch (e: Throwable) {
+                    // qualsiasi problema: la frase viene saltata, l'app non si chiude
+                    ultimoErrore = e.message ?: e.javaClass.simpleName
+                    inCorso = null
+                    rischio(ctx, false)
+                    try { frase.ascoltatore?.onError(frase.id) } catch (x: Throwable) { }
+                }
             }
         }.apply {
             name = "jarvis-voce-neurale"
@@ -190,13 +209,20 @@ object VoceNeurale {
     private fun pronuncia(ctx: Context, frase: Frase) {
         val tts = prepara(ctx)
         if (tts == null) {
+            // la voce non si carica: torno alla voce del telefono e lo segnalo
+            prefs(ctx).edit().putString("motore_voce", "android").putBoolean("neurale_guasta", true).apply()
             frase.ascoltatore?.onError(frase.id)
             return
         }
         interrompi = false
         inCorso = frase
         val frequenza = tts.sampleRate()
-        val t = traccia?.takeIf { it.sampleRate == frequenza } ?: run {
+        if (frequenza <= 0) {
+            inCorso = null
+            frase.ascoltatore?.onError(frase.id)
+            return
+        }
+        val t = traccia?.takeIf { it.sampleRate == frequenza && it.state == AudioTrack.STATE_INITIALIZED } ?: run {
             try { traccia?.release() } catch (e: Exception) { }
             AudioTrack.Builder()
                 .setAudioAttributes(
@@ -223,11 +249,21 @@ object VoceNeurale {
             if (t.playState != AudioTrack.PLAYSTATE_PLAYING) t.play()
             val partenza = t.playbackHeadPosition.toLong()
             val velocita = prefs(ctx).getFloat("voce_velocita", 1f).coerceIn(0.5f, 2f)
-            tts.generateWithCallback(frase.testo, 0, velocita) { pezzo ->
-                if (interrompi) return@generateWithCallback 0
-                t.write(pezzo, 0, pezzo.size, AudioTrack.WRITE_BLOCKING)
-                campioni += pezzo.size
-                1
+            rischio(ctx, true)
+            try {
+                // genero tutta la frase e poi la suono: più sicuro della generazione a pezzi
+                val audio = tts.generate(frase.testo, 0, velocita)
+                rischio(ctx, false)
+                val campioniFrase = audio.samples
+                var scritti = 0
+                while (!interrompi && scritti < campioniFrase.size) {
+                    val n = t.write(campioniFrase, scritti, minOf(4096, campioniFrase.size - scritti), AudioTrack.WRITE_BLOCKING)
+                    if (n <= 0) break
+                    scritti += n
+                }
+                campioni += scritti
+            } finally {
+                rischio(ctx, false)
             }
             // aspetta che l'altoparlante finisca di suonare quanto scritto
             val limite = System.currentTimeMillis() + 2000 + campioni * 1000 / frequenza
