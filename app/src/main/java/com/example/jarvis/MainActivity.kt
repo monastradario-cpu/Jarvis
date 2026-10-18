@@ -851,6 +851,16 @@ class MainActivity : Activity(), Cervello.Uscita {
         pagina.nota("Jarvis resta acceso in background con una notifica fissa: di' \"Jarvis\" oppure tocca Parla " +
             "nella notifica o la tessera Jarvis nel menu a tendina.")
         val parolaAttivazione = pagina.casella("Parola di attivazione \"Jarvis\" (offline)", prefs.getBoolean("parola_attivazione", true))
+        pagina.titoloSezione("Sensibilità della parola \"Jarvis\"")
+        pagina.nota("Di' \"Jarvis\" da solo, fai una piccola pausa e poi il comando.")
+        val sensibilita = pagina.scelta(
+            listOf(
+                "bassa" to "Bassa: solo \"Jarvis\" detto chiaro e da solo (consigliata con TV o gente intorno)",
+                "media" to "Media: equilibrata",
+                "alta" to "Alta: lo sente anche dentro una frase, ma sbaglia più spesso"
+            ),
+            prefs.getString("sensibilita", "media") ?: "media"
+        )
         pagina.bottone(if (ServizioJarvis.attivo) "Spegni la modalità sempre attiva" else "Accendi la modalità sempre attiva") {
             if (ServizioJarvis.attivo) spegniSempreAttivo() else accendiSempreAttivo()
         }
@@ -876,7 +886,10 @@ class MainActivity : Activity(), Cervello.Uscita {
             "Consenti impostazioni con limitazioni, poi riprova.")
         pagina.mostra {
             val cambiata = parolaAttivazione.isChecked != prefs.getBoolean("parola_attivazione", true)
-            prefs.edit().putBoolean("parola_attivazione", parolaAttivazione.isChecked).apply()
+            prefs.edit()
+                .putBoolean("parola_attivazione", parolaAttivazione.isChecked)
+                .putString("sensibilita", sensibilita())
+                .apply()
             if (cambiata && ServizioJarvis.attivo) {
                 stopService(Intent(this, ServizioJarvis::class.java))
                 reattore.postDelayed({ ServizioJarvis.avvia(this) }, 600)

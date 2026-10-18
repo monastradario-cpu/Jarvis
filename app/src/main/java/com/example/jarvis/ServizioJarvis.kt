@@ -187,8 +187,11 @@ class ServizioJarvis : Service() {
         )
     }
 
+    private var ultimaRipresa = 0L     // per ignorare l'eco subito dopo che Jarvis ha parlato
+
     private fun riprendiAttesa() {
         occupato = false
+        ultimaRipresa = System.currentTimeMillis()
         if (!attivo) return
         if (inPausa) {
             aggiornaNotifica("In pausa mentre l'app è aperta")
@@ -201,7 +204,9 @@ class ServizioJarvis : Service() {
         }
         try {
             if (ascoltoParola == null) {
-                val riconoscitoreParola = Recognizer(m, 16000f, "[\"jarvis\", \"hey jarvis\", \"[unk]\"]")
+                // Vocabolario completo (non solo "jarvis"): le altre parole non vengono scambiate per il nome.
+                // Con setWords ogni parola riconosciuta ha anche il suo grado di sicurezza.
+                val riconoscitoreParola = Recognizer(m, 16000f).apply { setWords(true) }
                 ascoltoParola = SpeechService(riconoscitoreParola, 16000f)
             }
             ascoltoParola?.startListening(ascoltatoreParola)
@@ -216,8 +221,8 @@ class ServizioJarvis : Service() {
     }
 
     private val ascoltatoreParola = object : org.vosk.android.RecognitionListener {
-        override fun onPartialResult(hypothesis: String?) = controlla(hypothesis, "partial")
-        override fun onResult(hypothesis: String?) = controlla(hypothesis, "text")
+        override fun onPartialResult(hypothesis: String?) {}   // i parziali sono troppo imprecisi
+        override fun onResult(hypothesis: String?) = controlla(hypothesis)
         override fun onFinalResult(hypothesis: String?) {}
         override fun onError(exception: Exception?) {
             aggiornaNotifica("Errore del microfono: tocca Parla")
@@ -225,10 +230,36 @@ class ServizioJarvis : Service() {
         override fun onTimeout() {}
     }
 
-    private fun controlla(json: String?, campo: String) {
+    /**
+     * Decide se la frase appena finita era davvero "Jarvis".
+     * Sensibilità:
+     * - bassa: "Jarvis" quasi da solo (massimo 2 parole) e riconosciuto con sicurezza altissima
+     * - media: massimo 4 parole e sicurezza alta (predefinita)
+     * - alta:  anche dentro una frase, sicurezza discreta
+     */
+    private fun controlla(json: String?) {
         if (occupato || json == null) return
-        val testo = try { JSONObject(json).optString(campo) } catch (e: Exception) { "" }
-        if (testo.contains("jarvis")) principale.post { avviaComando() }
+        if (System.currentTimeMillis() - ultimaRipresa < 2500) return
+        val risultato = try { JSONObject(json) } catch (e: Exception) { return }
+        val testo = risultato.optString("text").trim()
+        if (!testo.contains("jarvis")) return
+        val parole = testo.split(Regex("\\s+")).filter { it.isNotBlank() && it != "the" && it != "hey" && it != "a" }
+        val elenco = risultato.optJSONArray("result")
+        var sicurezza = 0.0
+        if (elenco != null) {
+            for (i in 0 until elenco.length()) {
+                val p = elenco.optJSONObject(i) ?: continue
+                if (p.optString("word") == "jarvis") sicurezza = maxOf(sicurezza, p.optDouble("conf", 0.0))
+            }
+        }
+        val (sogliaSicurezza, massimoParole) = when (cervello.prefs.getString("sensibilita", "media")) {
+            "bassa" -> 0.93 to 2
+            "alta" -> 0.65 to 12
+            else -> 0.82 to 4
+        }
+        if (sicurezza >= sogliaSicurezza && parole.size <= massimoParole) {
+            principale.post { avviaComando() }
+        }
     }
 
     // ================================================================
