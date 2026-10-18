@@ -9,8 +9,12 @@ jobs:
       - run: |
           curl -sSL -o it.zip https://alphacephei.com/vosk/models/vosk-model-small-it-0.22.zip
           unzip -q it.zip
+          {
           du -sh vosk-model-small-it-0.22
-          find vosk-model-small-it-0.22 -type f | head -50
+          find vosk-model-small-it-0.22 -type f | head -40
           W=$(find vosk-model-small-it-0.22 -name words.txt | head -1)
           echo "WORDS: $W"; wc -l $W
-          for p in '^jarvis ' '^giarvis' '^gervis' '^jervis' '^giarv' '^jarv' '^basta ' '^stop ' '^ciao ' '^ehi ' '^ehy ' '^hey ' '^ei ' '^ok ' '^okay ' '^zitto ' '^fermati ' '^jar' '^giar' '^gerv' '^ger' ; do echo "== $p"; grep -E "$p" $W | head -15; done
+          for p in '^jarvis ' '^giarvis' '^gervis' '^jervis' '^giarv' '^jarv' '^basta ' '^stop ' '^ciao ' '^ehi ' '^ehy ' '^hey ' '^ei ' '^ok ' '^okay ' '^zitto ' '^fermati ' '^jar' '^giar' '^gerv' '^ciarv' '^charv' '^iarv' '^arvis' '^davis ' '^travis ' '^jaris' ; do echo "== $p: $(grep -E "$p" $W | head -12 | cut -d' ' -f1 | tr '\n' ' ')"; done
+          } > out.txt 2>&1
+          M=$(sed ':a;N;$!ba;s/%/%25/g;s/\r/%0D/g;s/\n/%0A/g' out.txt)
+          echo "::notice title=risultato::$M"
