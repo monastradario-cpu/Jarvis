@@ -7,14 +7,37 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - run: |
-          curl -sSL -o it.zip https://alphacephei.com/vosk/models/vosk-model-small-it-0.22.zip
-          unzip -q it.zip
-          {
-          du -sh vosk-model-small-it-0.22
-          find vosk-model-small-it-0.22 -type f | head -40
-          W=$(find vosk-model-small-it-0.22 -name words.txt | head -1)
-          echo "WORDS: $W"; wc -l $W
-          for p in '^jarvis ' '^giarvis' '^gervis' '^jervis' '^giarv' '^jarv' '^basta ' '^stop ' '^ciao ' '^ehi ' '^ehy ' '^hey ' '^ei ' '^ok ' '^okay ' '^zitto ' '^fermati ' '^jar' '^giar' '^gerv' '^ciarv' '^charv' '^iarv' '^arvis' '^davis ' '^travis ' '^jaris' ; do echo "== $p: $(grep -E "$p" $W | head -12 | cut -d' ' -f1 | tr '\n' ' ')"; done
-          } > out.txt 2>&1
+          sudo apt-get install -y -qq espeak-ng >/dev/null 2>&1
+          pip install -q vosk
+          curl -sSL -o it.zip https://alphacephei.com/vosk/models/vosk-model-small-it-0.22.zip && unzip -q it.zip
+          curl -sSL -o en.zip https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip && unzip -q en.zip
+          for f in "ehi jarvis" "ciao jarvis" "basta" "stop" "jarvis" "accendi la torcia"; do n=$(echo $f | tr ' ' _); espeak-ng -v it -s 150 -w it_$n.wav "$f"; espeak-ng -v en-us -s 150 -w en_$n.wav "$f"; done
+          cat > t.py <<'PY'
+          import json, wave, subprocess, glob, sys
+          from vosk import Model, KaldiRecognizer, SetLogLevel
+          SetLogLevel(0)
+          out = []
+          for name, path in [("it","vosk-model-small-it-0.22"),("en","vosk-model-small-en-us-0.15")]:
+              m = Model(path)
+              cands = ["jarvis","giarvis","gervis","jervis","ciarvis","giarvi","gervasi","gervais","iarvis","jarvi","ciao","ehi","ei","hey","ok","okay","basta","stop","zitto","fermati","silenzio","giar","vis","davis","travis","chow","hi","enough"]
+              for c in cands:
+                  r = KaldiRecognizer(m, 16000, json.dumps([c, "[unk]"]))
+              for g in [["ehi jarvis","ciao jarvis","jarvis","basta","stop","[unk]"],["ehi giarvis","ciao giarvis","giarvis","ciao gervis","gervis","basta","stop","[unk]"],None]:
+                  for wav in sorted(glob.glob("*.wav")):
+                      subprocess.run(["sox", wav, "-r", "16000", "-c", "1", "-b", "16", "x.wav"], check=False)
+                      wf = wave.open("x.wav")
+                      r = KaldiRecognizer(m, 16000, json.dumps(g)) if g else KaldiRecognizer(m, 16000)
+                      r.SetWords(True)
+                      while True:
+                          d = wf.readframes(4000)
+                          if not d: break
+                          r.AcceptWaveform(d)
+                      res = json.loads(r.FinalResult())
+                      out.append(f"{name} g={'free' if g is None else g[0]} {wav}: {res.get('text')} {[ (w['word'], round(w['conf'],2)) for w in res.get('result',[])]}")
+          print("\n".join(out))
+          PY
+          sudo apt-get install -y -qq sox >/dev/null 2>&1
+          python t.py > out.txt 2> err.txt || true
+          grep -i "ignoring\|missing\|vocab" err.txt | sort -u >> out.txt
           M=$(sed ':a;N;$!ba;s/%/%25/g;s/\r/%0D/g;s/\n/%0A/g' out.txt)
           echo "::notice title=risultato::$M"
