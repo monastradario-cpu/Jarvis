@@ -1,20 +1,31 @@
-name: Esplora sherpa
+name: Prova voce neurale
 on:
   push:
     branches: [esplora]
 jobs:
-  esplora:
+  prova:
     runs-on: ubuntu-latest
     steps:
       - run: |
-          TAG=v1.13.8; V=1.13.8
-          curl -sSL -o x.aar "https://github.com/k2-fsa/sherpa-onnx/releases/download/$TAG/sherpa-onnx-$V.aar"
-          unzip -l x.aar | grep -v "x86" > a1.txt
-          mkdir aar && cd aar && unzip -q ../x.aar && unzip -l classes.jar | grep -i tts > ../a2.txt; cd ..
-          curl -sSL "https://raw.githubusercontent.com/k2-fsa/sherpa-onnx/$TAG/sherpa-onnx/kotlin-api/Tts.kt" > tts.txt
-          wc -l tts.txt >> a2.txt
-          curl -sSL -o v.tar.bz2 "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-it_IT-paola-medium-int8.tar.bz2" && tar tjf v.tar.bz2 | grep -v "espeak-ng-data/.*/" | head -20 >> a2.txt
-          tar tjf v.tar.bz2 | wc -l >> a2.txt
-          for f in a1.txt a2.txt; do M=$(sed ':a;N;$!ba;s/%/%25/g;s/\r/%0D/g;s/\n/%0A/g' $f); echo "::notice title=$f::$M"; done
-          split -l 70 tts.txt parte_
-          for f in parte_*; do M=$(sed ':a;N;$!ba;s/%/%25/g;s/\r/%0D/g;s/\n/%0A/g' $f); echo "::notice title=$f::$M"; done
+          pip install -q sherpa-onnx==1.13.8 2>&1 | tail -2 || pip install -q sherpa-onnx
+          for V in vits-piper-it_IT-miro-high-int8 vits-piper-it_IT-paola-medium-int8; do
+            curl -sSL -o v.tar.bz2 "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/$V.tar.bz2" && tar xjf v.tar.bz2
+          done
+          cat > t.py <<'PY'
+          import sherpa_onnx, glob, os, time, sys
+          out=[]
+          for d in ["vits-piper-it_IT-miro-high-int8","vits-piper-it_IT-paola-medium-int8"]:
+              onnx=[f for f in os.listdir(d) if f.endswith(".onnx")]
+              out.append(f"{d}: files={sorted(os.listdir(d))[:8]} onnx={onnx}")
+              cfg=sherpa_onnx.OfflineTtsConfig(model=sherpa_onnx.OfflineTtsModelConfig(vits=sherpa_onnx.OfflineTtsVitsModelConfig(model=f"{d}/{onnx[0]}",tokens=f"{d}/tokens.txt",data_dir=f"{d}/espeak-ng-data"),num_threads=2),max_num_sentences=1)
+              try:
+                  tts=sherpa_onnx.OfflineTts(cfg)
+                  t=time.time(); a=tts.generate("Buongiorno. Sono Jarvis, a sua disposizione.", sid=0, speed=1.0)
+                  out.append(f"  OK sr={a.sample_rate} n={len(a.samples)} t={time.time()-t:.2f}s speakers={tts.num_speakers}")
+              except Exception as e:
+                  out.append(f"  ERRORE {e}")
+          print("\n".join(out))
+          PY
+          python t.py > out.txt 2>&1 || true
+          tail -c 3000 out.txt > o2.txt
+          M=$(sed ':a;N;$!ba;s/%/%25/g;s/\r/%0D/g;s/\n/%0A/g' o2.txt); echo "::notice title=risultato::$M"
