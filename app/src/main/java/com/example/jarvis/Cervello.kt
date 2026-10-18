@@ -311,9 +311,9 @@ class Cervello private constructor(private val ctx: Context) {
         if (pluginAttivo("mattino")) {
             p.append("- Per il riepilogo del mattino usa riepilogo_giornata e raccontalo come un buongiorno, in poche frasi.\n")
         }
-        p.append("- Prima di inviare messaggi, pubblicare, comprare, cancellare o cambiare impostazioni importanti, ")
-        p.append("ripeti all'utente cosa stai per fare e chiedi conferma, a meno che non ti abbia già detto ")
-        p.append("chiaramente destinatario e testo.\n")
+        p.append("- Apri app, chiama e invia messaggi direttamente, senza chiedere conferma.\n")
+        p.append("- ACQUISTI: prima di comprare, pagare, ordinare o abbonarti a qualcosa chiedi SEMPRE due conferme ")
+        p.append("all'utente (cosa, prezzo se lo vedi, e poi \"è sicuro?\"). Il tocco su pulsanti di pagamento richiede comunque conferma.\n")
         p.append("- Non salvare mai password, codici o dati bancari e non scriverli nelle app.\n\n")
 
         p.append("MEMORIA DI FONDO (usala come contesto, in modo naturale, senza ripeterla)\n")
@@ -1233,7 +1233,18 @@ class Cervello private constructor(private val ctx: Context) {
     @Volatile private var turno = 0
     @Volatile private var inSospeso: AzioneInSospeso? = null
 
-    /** Strumenti che aprono un'altra app: prima di usarli Jarvis spiega cosa farà e chiede conferma. */
+    /** Pulsanti che spendono soldi: per toccarli servono due conferme dell'utente. */
+    private val PAROLE_ACQUISTO = listOf(
+        "acquist", "compra", "paga", "pagamento", "ordina", "ordine", "checkout", "cassa", "abbonati", "abbonamento",
+        "noleggia", "prenota e paga", "conferma e paga", "buy", "pay", "purchase", "place order", "subscribe", "rent"
+    )
+
+    private fun eUnAcquisto(testo: String): Boolean {
+        val t = testo.lowercase(Locale.ITALIAN)
+        return PAROLE_ACQUISTO.any { t.contains(it) }
+    }
+
+    /** Strumenti che aprono un'altra app: solo se l'utente attiva la conferma in CARATTERE. */
     private val STRUMENTI_CHE_APRONO_APP = setOf(
         "apri_app", "apri_sito", "cerca_sul_web", "cerca_su_youtube", "naviga",
         "riproduci", "chiama", "scrivi_sms", "invia_whatsapp"
@@ -1244,7 +1255,12 @@ class Cervello private constructor(private val ctx: Context) {
         return when {
             nome == "conferma_azione" -> confermaAzione(a.optString("risposta"))
             nome == "cancella_appuntamenti" -> preparaCancellazione(a)
-            nome in STRUMENTI_CHE_APRONO_APP && prefs.getBoolean("conferma_app", true) -> {
+            nome == "tocca" && eUnAcquisto(a.optString("testo")) -> {
+                inSospeso = AzioneInSospeso(nome, a, 1, 2, turno)
+                "NON ANCORA ESEGUITO: \"${a.optString("testo")}\" è un pulsante di acquisto o pagamento. " +
+                    "Di' all'utente cosa sta per comprare (e il prezzo, se lo hai letto sullo schermo) e chiedi la prima conferma."
+            }
+            nome in STRUMENTI_CHE_APRONO_APP && prefs.getBoolean("conferma_app", false) -> {
                 inSospeso = AzioneInSospeso(nome, a, 1, 1, turno)
                 "NON ANCORA ESEGUITO. Prima di aprire l'app spiega all'utente in una frase cosa farai " +
                     "(quale app aprirai e cosa farai lì) e chiedi se può procedere. Aspetta la sua risposta."
@@ -1280,8 +1296,10 @@ class Cervello private constructor(private val ctx: Context) {
         }
         if (azione.fase < azione.fasiTotali) {
             azione.fase++
+            val esempio = if (azione.nome == "cancella_appuntamenti") "\"È sicuro? La cancellazione è definitiva e non si può annullare.\""
+            else "\"È sicuro di voler procedere con l'acquisto?\""
             return "Prima conferma ricevuta, ancora NON ESEGUITO. Ora chiedi la SECONDA conferma, per esempio: " +
-                "\"È sicuro? La cancellazione è definitiva e non si può annullare.\" Poi aspetta la risposta."
+                "$esempio Poi aspetta la risposta."
         }
         inSospeso = null
         return if (azione.nome == "cancella_appuntamenti") {

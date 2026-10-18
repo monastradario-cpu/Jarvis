@@ -762,9 +762,9 @@ class MainActivity : Activity(), Cervello.Uscita {
         )
         val confermaApp = pagina.casella(
             "Prima di aprire un'app, spiegami cosa farai e chiedimi conferma",
-            prefs.getBoolean("conferma_app", true)
+            prefs.getBoolean("conferma_app", false)
         )
-        pagina.nota("Per cancellare appuntamenti Jarvis chiede sempre due conferme.")
+        pagina.nota("Per gli acquisti e per cancellare appuntamenti Jarvis chiede sempre due conferme.")
         pagina.mostra {
             prefs.edit()
                 .putString("personalita", stile())
