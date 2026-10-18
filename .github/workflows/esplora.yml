@@ -1,0 +1,16 @@
+name: Esplora modello italiano
+on:
+  push:
+    branches: [esplora]
+jobs:
+  esplora:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          curl -sSL -o it.zip https://alphacephei.com/vosk/models/vosk-model-small-it-0.22.zip
+          unzip -q it.zip
+          du -sh vosk-model-small-it-0.22
+          find vosk-model-small-it-0.22 -type f | head -50
+          W=$(find vosk-model-small-it-0.22 -name words.txt | head -1)
+          echo "WORDS: $W"; wc -l $W
+          for p in '^jarvis ' '^giarvis' '^gervis' '^jervis' '^giarv' '^jarv' '^basta ' '^stop ' '^ciao ' '^ehi ' '^ehy ' '^hey ' '^ei ' '^ok ' '^okay ' '^zitto ' '^fermati ' '^jar' '^giar' '^gerv' '^ger' ; do echo "== $p"; grep -E "$p" $W | head -15; done
