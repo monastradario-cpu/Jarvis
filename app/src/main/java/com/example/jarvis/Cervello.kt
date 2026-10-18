@@ -168,6 +168,18 @@ class Cervello private constructor(private val ctx: Context) {
 
     fun numeroRichieste() = leggiDiario().length()
 
+    /** Le ultime richieste del diario, dalla più recente, per la schermata Cronologia. */
+    fun ultimeRichieste(quante: Int): String {
+        val diario = leggiDiario()
+        if (diario.length() == 0) return "Ancora nessuna richiesta."
+        val righe = mutableListOf<String>()
+        for (i in diario.length() - 1 downTo maxOf(0, diario.length() - quante)) {
+            val v = diario.optJSONObject(i) ?: continue
+            righe.add("${v.optString("t")}\n› ${v.optString("d")}\n${v.optString("r")}")
+        }
+        return righe.joinToString("\n\n")
+    }
+
     /** Il carattere di Jarvis, scelto nelle impostazioni. */
     private fun personalita(): String {
         val stile = prefs.getString("personalita", "maggiordomo") ?: "maggiordomo"

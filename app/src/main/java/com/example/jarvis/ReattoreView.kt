@@ -38,6 +38,9 @@ class ReattoreView(context: Context) : View(context) {
             invalidate()
         }
 
+    /** Animazioni ridotte: più lente, meno fotogrammi e niente particelle (risparmia batteria). */
+    var ridotto = false
+
     /** Volume della voce da 0 a 1, aggiornato dal microfono. */
     @Volatile var livelloVoce = 0f
 
@@ -97,7 +100,7 @@ class ReattoreView(context: Context) : View(context) {
         tempoPrecedente = adesso
         val t = (adesso % 1_000_000_000_000L) / 1e9f
 
-        val velocita = when (stato) {
+        val velocita = (if (ridotto) 0.5f else 1f) * when (stato) {
             Stato.RIPOSO -> 1f
             Stato.ASCOLTO -> 1.5f
             Stato.PENSIERO -> 4f
@@ -174,7 +177,7 @@ class ReattoreView(context: Context) : View(context) {
         canvas.restore()
 
         // ---- 5. particelle (solo mentre pensa o parla) ----
-        if (energia > 0.05f) {
+        if (energia > 0.05f && !ridotto) {
             pennello.style = Paint.Style.FILL
             for (p in particelle) {
                 p.angolo += p.velocita * velocita * dt
@@ -221,6 +224,6 @@ class ReattoreView(context: Context) : View(context) {
         }
 
         // Prossimo fotogramma (si ferma da solo quando l'app non è visibile)
-        postInvalidateOnAnimation()
+        if (ridotto) postInvalidateDelayed(50) else postInvalidateOnAnimation()
     }
 }
