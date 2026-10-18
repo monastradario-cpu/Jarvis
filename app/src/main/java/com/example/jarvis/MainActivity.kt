@@ -39,6 +39,7 @@ import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.RadioButton
 import android.widget.RadioGroup
+import android.widget.SeekBar
 import android.widget.ScrollView
 import android.widget.TextView
 import org.json.JSONArray
@@ -113,7 +114,7 @@ class MainActivity : Activity(), Cervello.Uscita {
 
         tts = TextToSpeech(this) { esito ->
             if (esito == TextToSpeech.SUCCESS) {
-                tts?.setLanguage(Locale("it", "IT"))
+                tts?.let { Voce.applica(it, prefs) }
                 tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                     override fun onStart(utteranceId: String?) {
                         runOnUiThread { parlando = true; aggiornaMic() }
@@ -441,6 +442,96 @@ class MainActivity : Activity(), Cervello.Uscita {
             plugin.id to casella
         }
 
+        titoloSezione("Voce")
+        nota("Scegli tra le voci italiane del telefono e regola tono e velocità.")
+        var tonoScelto = prefs.getFloat("voce_tono", Voce.TONO_PREDEFINITO)
+        var velocitaScelta = prefs.getFloat("voce_velocita", Voce.VELOCITA_PREDEFINITA)
+
+        fun prova() {
+            val voce = tts ?: return
+            Voce.applica(voce, prefs)
+            voce.setPitch(tonoScelto)
+            voce.setSpeechRate(velocitaScelta)
+            voce.speak("Buongiorno. Sono Jarvis, a sua disposizione.", TextToSpeech.QUEUE_FLUSH, null, "prova")
+        }
+
+        fun cursore(etichetta: String, valore: Float, cambia: (Float) -> Unit) {
+            val testo = TextView(this).apply { setPadding(0, dp(10), 0, 0) }
+            fun scrivi(v: Float) { testo.text = "$etichetta: ${(v * 100).toInt()}%" }
+            scrivi(valore)
+            contenitore.addView(testo)
+            contenitore.addView(SeekBar(this).apply {
+                max = 100                         // da 50% a 150%
+                progress = ((valore - 0.5f) * 100).toInt().coerceIn(0, 100)
+                setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                    override fun onProgressChanged(barra: SeekBar?, p: Int, utente: Boolean) {
+                        val v = 0.5f + p / 100f
+                        scrivi(v)
+                        cambia(v)
+                    }
+                    override fun onStartTrackingTouch(barra: SeekBar?) {}
+                    override fun onStopTrackingTouch(barra: SeekBar?) { prova() }
+                })
+            })
+        }
+
+        val nomeVoce = TextView(this).apply { setPadding(0, dp(6), 0, 0) }
+        fun aggiornaNomeVoce() {
+            val voce = tts
+            val scelta = prefs.getString("voce_nome", "") ?: ""
+            val elenco = if (voce != null) Voce.vociItaliane(voce) else emptyList()
+            val indice = elenco.indexOfFirst { it.name == scelta }
+            nomeVoce.text = "Voce attuale: " + if (indice >= 0) Voce.etichetta(elenco[indice], indice + 1) else "predefinita del telefono"
+        }
+        aggiornaNomeVoce()
+        contenitore.addView(nomeVoce)
+        contenitore.addView(Button(this).apply {
+            text = "Scegli la voce"
+            isAllCaps = false
+            setOnClickListener {
+                val voce = tts
+                val elenco = if (voce != null) Voce.vociItaliane(voce) else emptyList()
+                if (elenco.isEmpty()) {
+                    aggiungiAlRegistro("Jarvis", "Non trovo voci italiane. Installale da Impostazioni > Sintesi vocale > Dati vocali.")
+                    return@setOnClickListener
+                }
+                val nomi = elenco.mapIndexed { i, v -> Voce.etichetta(v, i + 1) }.toTypedArray()
+                AlertDialog.Builder(this@MainActivity)
+                    .setTitle("Tocca una voce per sentirla")
+                    .setItems(nomi) { _, i ->
+                        prefs.edit().putString("voce_nome", elenco[i].name).apply()
+                        aggiornaNomeVoce()
+                        prova()
+                    }
+                    .setNegativeButton("Chiudi", null)
+                    .show()
+            }
+        })
+        cursore("Tono", tonoScelto) { tonoScelto = it }
+        cursore("Velocità", velocitaScelta) { velocitaScelta = it }
+        contenitore.addView(Button(this).apply {
+            text = "Prova la voce"
+            isAllCaps = false
+            setOnClickListener { prova() }
+        })
+        contenitore.addView(Button(this).apply {
+            text = "Preset Jarvis: maschile, grave, calmo"
+            isAllCaps = false
+            setOnClickListener {
+                val voce = tts
+                val maschile = if (voce != null) Voce.vociItaliane(voce).withIndex()
+                    .firstOrNull { Voce.etichetta(it.value, it.index + 1).contains("maschile") }?.value else null
+                if (maschile != null) prefs.edit().putString("voce_nome", maschile.name).apply()
+                tonoScelto = 0.85f
+                velocitaScelta = 0.95f
+                prefs.edit().putFloat("voce_tono", tonoScelto).putFloat("voce_velocita", velocitaScelta).apply()
+                aggiornaNomeVoce()
+                prova()
+                aggiungiAlRegistro("Jarvis", "Preset Jarvis applicato. Riapri le impostazioni per vedere i nuovi valori.")
+            }
+        })
+        nota("Altre voci: Impostazioni del telefono > Sintesi vocale > Dati vocali di Google, oppure installa un altro motore vocale.")
+
         titoloSezione("Sempre attivo")
         nota("Jarvis resta acceso in background con una notifica fissa: di' \"Jarvis\" oppure tocca Parla nella notifica " +
             "o la tessera Jarvis nel menu a tendina.")
@@ -497,6 +588,7 @@ class MainActivity : Activity(), Cervello.Uscita {
                     .putString("modello", modelloGemini.text.toString().trim().ifBlank { Cervello.MODELLO_PREDEFINITO })
                     .putString("citta", citta.text.toString().trim().ifBlank { Cervello.CITTA_PREDEFINITA })
                 for ((id, casella) in caselle) modifica.putBoolean("plugin_$id", casella.isChecked)
+                modifica.putFloat("voce_tono", tonoScelto).putFloat("voce_velocita", velocitaScelta)
                 val parolaCambiata = parolaAttivazione.isChecked != prefs.getBoolean("parola_attivazione", true)
                 modifica.putBoolean("parola_attivazione", parolaAttivazione.isChecked)
                 modifica.apply()
@@ -683,6 +775,7 @@ class MainActivity : Activity(), Cervello.Uscita {
 
     private fun parla(testo: String) {
         val pulito = testo.replace(Regex("[*#_`]"), "")
+        tts?.let { Voce.applica(it, prefs) }
         tts?.speak(pulito, TextToSpeech.QUEUE_FLUSH, null, "jarvis")
     }
 

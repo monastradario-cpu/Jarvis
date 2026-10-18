@@ -83,7 +83,7 @@ class ServizioJarvis : Service() {
         creaCanale()
         tts = TextToSpeech(this) { esito ->
             if (esito == TextToSpeech.SUCCESS) {
-                tts?.setLanguage(Locale("it", "IT"))
+                tts?.let { Voce.applica(it, cervello.prefs) }
                 tts?.setOnUtteranceProgressListener(ascoltatoreVoce)
             }
         }
@@ -281,6 +281,7 @@ class ServizioJarvis : Service() {
         continuaDopo = pulito.trim().endsWith("?")
         aggiornaNotifica(pulito.take(120))
         val voce = tts
+        voce?.let { Voce.applica(it, cervello.prefs) }
         if (voce == null || voce.speak(pulito, TextToSpeech.QUEUE_FLUSH, null, "servizio") != TextToSpeech.SUCCESS) {
             riprendiAttesa()
         }
