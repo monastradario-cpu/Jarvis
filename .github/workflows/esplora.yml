@@ -7,27 +7,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - run: |
-          {
-          TAG=$(curl -sSL https://api.github.com/repos/k2-fsa/sherpa-onnx/releases/latest | python3 -c "import sys,json;print(json.load(sys.stdin)['tag_name'])")
-          echo "TAG $TAG"
-          curl -sSL https://api.github.com/repos/k2-fsa/sherpa-onnx/releases/latest | python3 -c "
-          import sys,json
-          for a in json.load(sys.stdin)['assets']:
-              n=a['name']
-              if 'android' in n.lower() or n.endswith('.aar'): print(n, a['size'], a['browser_download_url'])
-          "
-          curl -sSL "https://api.github.com/repos/k2-fsa/sherpa-onnx/releases/tags/tts-models" | python3 -c "
-          import sys,json
-          for a in json.load(sys.stdin)['assets']:
-              n=a['name']
-              if 'it_IT' in n or 'it-IT' in n: print(n, a['size'])
-          "
-          V=${TAG#v}
-          curl -sSL -o a.tar.bz2 "https://github.com/k2-fsa/sherpa-onnx/releases/download/$TAG/sherpa-onnx-$TAG-android.tar.bz2" && tar tjf a.tar.bz2 | head -30
-          ls -la a.tar.bz2
-          curl -sSL -o x.aar "https://github.com/k2-fsa/sherpa-onnx/releases/download/$TAG/sherpa-onnx-$V.aar" && unzip -l x.aar | head -40
-          echo ==== Tts.kt
-          curl -sSL "https://raw.githubusercontent.com/k2-fsa/sherpa-onnx/$TAG/sherpa-onnx/kotlin-api/Tts.kt" | head -150
-          } > out.txt 2>&1
-          M=$(sed ':a;N;$!ba;s/%/%25/g;s/\r/%0D/g;s/\n/%0A/g' out.txt)
-          echo "::notice title=risultato::$M"
+          TAG=v1.13.8; V=1.13.8
+          curl -sSL -o x.aar "https://github.com/k2-fsa/sherpa-onnx/releases/download/$TAG/sherpa-onnx-$V.aar"
+          unzip -l x.aar | grep -v "x86" > a1.txt
+          mkdir aar && cd aar && unzip -q ../x.aar && unzip -l classes.jar | grep -i tts > ../a2.txt; cd ..
+          curl -sSL "https://raw.githubusercontent.com/k2-fsa/sherpa-onnx/$TAG/sherpa-onnx/kotlin-api/Tts.kt" > tts.txt
+          wc -l tts.txt >> a2.txt
+          curl -sSL -o v.tar.bz2 "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-it_IT-paola-medium-int8.tar.bz2" && tar tjf v.tar.bz2 | grep -v "espeak-ng-data/.*/" | head -20 >> a2.txt
+          tar tjf v.tar.bz2 | wc -l >> a2.txt
+          for f in a1.txt a2.txt; do M=$(sed ':a;N;$!ba;s/%/%25/g;s/\r/%0D/g;s/\n/%0A/g' $f); echo "::notice title=$f::$M"; done
+          split -l 70 tts.txt parte_
+          for f in parte_*; do M=$(sed ':a;N;$!ba;s/%/%25/g;s/\r/%0D/g;s/\n/%0A/g' $f); echo "::notice title=$f::$M"; done
