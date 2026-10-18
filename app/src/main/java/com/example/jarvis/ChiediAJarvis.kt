@@ -103,6 +103,7 @@ class ChiediAJarvis : Activity() {
                 Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, ultimaRisposta), "Condividi"
             ))
         })
+        sotto.addView(pulsante("ARCHIVIA") { archivia() })
         sotto.addView(pulsante("ZITTO") { tts?.stop() })
         sotto.addView(pulsante("CHIUDI") { finish() })
         radice.addView(sotto)
@@ -167,20 +168,7 @@ class ChiediAJarvis : Activity() {
                     uri != null -> {
                         val tipo = contentResolver.getType(uri) ?: i.type ?: "application/octet-stream"
                         val dati = contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: ByteArray(0)
-                        when {
-                            dati.size > 19_000_000 -> null
-                            tipo.startsWith("text/") -> Cervello.Contenuto("testo", nomeFile(uri), String(dati, Charsets.UTF_8), null, tipo)
-                            else -> Cervello.Contenuto(
-                                when {
-                                    tipo.startsWith("image/") -> "immagine"
-                                    tipo.startsWith("audio/") -> "audio"
-                                    tipo == "application/pdf" -> "pdf"
-                                    tipo.startsWith("video/") -> "video"
-                                    else -> "file"
-                                },
-                                nomeFile(uri), "", Base64.encodeToString(dati, Base64.NO_WRAP), tipo
-                            )
-                        }
+                        Allegati.daByte(nomeFile(uri), tipo, dati)
                     }
                     Regex("^https?://\\S+$").matches(testo) || (testo.length < 400 && Regex("https?://\\S+").containsMatchIn(testo)) -> {
                         val link = Regex("https?://\\S+").find(testo)!!.value
@@ -209,6 +197,22 @@ class ChiediAJarvis : Activity() {
                     else risultato.text = "Cosa vuoi che faccia? Tocca RIASSUMI, TRADUCI, SPIEGA oppure fai una domanda."
                 }
             }
+        }.start()
+    }
+
+    /** Conserva il contenuto nell'archivio di Jarvis, con un riassunto. */
+    private fun archivia() {
+        val c = contenuto ?: return
+        stato.text = "Lo conservo nell'archivio..."
+        Thread {
+            val esito = try {
+                val cervello = Cervello.prendi(this)
+                Archivio.salva(this, c, cervello.riassuntoPerArchivio(c))
+                "Salvato nell'archivio: potrai chiedermelo quando vuoi."
+            } catch (e: Exception) {
+                "Non sono riuscito a salvarlo: ${e.message}"
+            }
+            runOnUiThread { stato.text = esito }
         }.start()
     }
 

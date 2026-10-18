@@ -126,7 +126,9 @@ class Cervello private constructor(private val ctx: Context) {
         Plugin("traduttore", "Traduttore simultaneo",
             listOf("traduttore")),
         Plugin("resoconto", "Resoconto della settimana",
-            listOf("resoconto_settimana"))
+            listOf("resoconto_settimana")),
+        Plugin("archivio", "Archivio dei documenti caricati",
+            listOf("archivio_cerca", "archivio_leggi", "archivio_elimina"))
     )
     // Gli strumenti della memoria (ricorda, lezioni, routine, diario) sono sempre attivi.
 
@@ -475,6 +477,12 @@ class Cervello private constructor(private val ctx: Context) {
         if (pluginAttivo("liste")) p.append("- Per la lista della spesa e altre liste usa lista_aggiungi, lista_leggi, lista_togli e lista_invia.\n")
         if (pluginAttivo("traduttore")) p.append("- Se l'utente deve parlare con qualcuno in un'altra lingua, apri il traduttore simultaneo con traduttore.\n")
         p.append("- Se l'utente chiede di non ricordare questa conversazione, usa modalita_privata.\n")
+        if (pluginAttivo("archivio")) {
+            val documenti = Archivio.numero(ctx)
+            p.append("- L'utente può caricare foto e documenti con il tasto + accanto al campo di testo. ")
+            if (documenti > 0) p.append("Nell'archivio ci sono $documenti documenti: per domande su bollette, contratti, ricevute, referti o altri documenti usa archivio_cerca e poi archivio_leggi.\n")
+            else p.append("L'archivio dei documenti per ora è vuoto.\n")
+        }
         p.append("\nRICHIESTE IN PIÙ PASSAGGI\n")
         p.append("- Se la richiesta ha più parti (per esempio \"prenota un tavolo e scrivilo a Marco\"), dividila in passi ed eseguili tutti, uno alla volta.\n")
         p.append("- Dopo ogni azione su un'altra app guarda lo SCHERMO DOPO L'AZIONE che ricevi: controlla che il passo sia riuscito prima di andare avanti.\n")
@@ -1730,6 +1738,16 @@ class Cervello private constructor(private val ctx: Context) {
                 listOf(p("tipo", "string", "Facoltativo"))),
             strumento("modalita_privata", "Attiva o disattiva la modalità privata: niente diario, ricordi o salvataggi.",
                 listOf(p("attiva", "boolean", "true per attivarla, false per uscire e dimenticare la conversazione")), listOf("attiva")),
+            // --- Archivio dei documenti ---
+            strumento("archivio_cerca", "Cerca tra i documenti e le foto caricati dall'utente (nomi e riassunti).",
+                listOf(p("testo", "string", "Parole da cercare, es. bolletta luce, contratto; vuoto per l'elenco")), listOf("testo")),
+            strumento("archivio_leggi", "Rilegge un documento dell'archivio per rispondere a una domanda precisa.",
+                listOf(
+                    p("documento", "string", "Nome o argomento del documento"),
+                    p("domanda", "string", "Cosa vuole sapere l'utente")
+                ), listOf("documento", "domanda")),
+            strumento("archivio_elimina", "Toglie un documento dall'archivio.",
+                listOf(p("documento", "string", "Nome del documento")), listOf("documento")),
             strumento("conferma_azione",
                 "Comunica la risposta dell'utente a un'azione in attesa di conferma (apertura di un'app, cancellazioni).",
                 listOf(p("risposta", "string", "sì se l'utente ha confermato, no se ha rifiutato")), listOf("risposta"))
@@ -1928,6 +1946,13 @@ class Cervello private constructor(private val ctx: Context) {
                 "Ho aperto il traduttore simultaneo: l'utente parla in italiano, l'altra persona nella sua lingua."
             )
             "resoconto_settimana" -> resocontoSettimana()
+            "archivio_cerca" -> Archivio.cerca(ctx, a.optString("testo"))
+            "archivio_leggi" -> {
+                val voce = Archivio.trova(ctx, a.optString("documento")) ?: return "Non trovo \"${a.optString("documento")}\" nell'archivio."
+                val doc = Archivio.carica(ctx, voce) ?: return "Il file di ${voce.optString("nome")} non c'è più."
+                "Da ${voce.optString("nome")}: " + analizzaContenuti(listOf(doc), a.optString("domanda"), "")
+            }
+            "archivio_elimina" -> Archivio.elimina(ctx, a.optString("documento"))
             "modalita_privata" -> modalitaPrivata(a.optBoolean("attiva", true))
             "attendi" -> {
                 Thread.sleep(a.optInt("secondi", 2).coerceIn(1, 10) * 1000L)
@@ -2210,31 +2235,57 @@ class Cervello private constructor(private val ctx: Context) {
     }
 
     /** Riassume, traduce o risponde a domande su un contenuto condiviso. */
-    fun analizzaContenuto(c: Contenuto, istruzione: String): String {
+    fun analizzaContenuto(c: Contenuto, istruzione: String): String = analizzaContenuti(listOf(c), istruzione, "")
+
+    /**
+     * Risponde su uno o più file caricati (foto, PDF, documenti, audio, video).
+     * @param contesto domande e risposte precedenti sugli stessi file, per le domande successive
+     */
+    fun analizzaContenuti(lista: List<Contenuto>, istruzione: String, contesto: String): String {
         if (chiaveAttiva().isEmpty()) return "Manca la chiave API: inseriscila in Cervello."
-        val richiesta = "$istruzione\nRispondi in italiano, in modo chiaro e senza simboli di formattazione."
+        val testi = lista.filter { it.base64 == null }
+        val file = lista.filter { it.base64 != null }
+        val richiesta = StringBuilder()
+        if (contesto.isNotBlank()) richiesta.append("Domande e risposte precedenti su questi file:\n").append(contesto.takeLast(3000)).append("\n\n")
+        richiesta.append(istruzione).append("\nRispondi in italiano, in modo chiaro, adatto a essere letto ad alta voce, senza simboli di formattazione.")
+        if (file.isNotEmpty()) richiesta.append("\nFile allegati: ").append(file.joinToString(", ") { it.titolo }).append(".")
+        for (t in testi) richiesta.append("\n\nCONTENUTO DI \"${t.titolo}\":\n").append(t.testo.take(60000 / testi.size.coerceAtLeast(1)))
         val inizio = System.currentTimeMillis()
         val r = when {
-            c.base64 == null -> chiamaSemplice("$richiesta\n\nCONTENUTO (${c.titolo}):\n${c.testo.take(60000)}", 1500)
-            usaClaude() -> claudeFile(c.mime, c.base64, richiesta)
-            else -> geminiFile(c.mime, c.base64, richiesta)
+            file.isEmpty() -> chiamaSemplice(richiesta.toString(), 1500)
+            usaClaude() -> claudeFile(file, richiesta.toString())
+            else -> geminiFile(file, richiesta.toString())
         }
-        Statistiche.richiesta(ctx, "ia", System.currentTimeMillis() - inizio, listOf("condividi_${c.tipo}"))
+        Statistiche.richiesta(ctx, "ia", System.currentTimeMillis() - inizio, lista.map { "file_${it.tipo}" })
         return r.ifBlank { "Non ho trovato niente da dire su questo contenuto." }
     }
 
+    /** Riassunto breve da conservare nell'archivio dei documenti. */
+    fun riassuntoPerArchivio(c: Contenuto): String = analizzaContenuti(
+        listOf(c),
+        "Fai un riassunto di questo documento in al massimo 5 frasi, da conservare in archivio. Indica che tipo di documento è " +
+            "e riporta date, scadenze, importi, nomi, indirizzi e numeri importanti.",
+        ""
+    )
+
+    /** Uno scambio avvenuto fuori dalla conversazione normale (per esempio sui file) entra in diario e conversazione. */
+    fun registraScambioEsterno(domanda: String, risposta: String) = synchronized(blocco) {
+        scriviNelDiario(domanda, risposta, "file")
+        registraScambioLocale(domanda, risposta)
+        salvaConversazioni()
+    }
+
     /** Gemini (API nativa) legge immagini, PDF, audio e video direttamente. */
-    private fun geminiFile(mime: String, base64: String, richiesta: String): String {
+    private fun geminiFile(file: List<Contenuto>, richiesta: String): String {
         val modello = prefs.getString("modello", MODELLO_PREDEFINITO) ?: MODELLO_PREDEFINITO
-        val corpo = JSONObject().put("contents", JSONArray().put(JSONObject()
-            .put("role", "user")
-            .put("parts", JSONArray()
-                .put(JSONObject().put("inline_data", JSONObject().put("mime_type", mime).put("data", base64)))
-                .put(JSONObject().put("text", richiesta)))))
+        val parti = JSONArray()
+        for (f in file) parti.put(JSONObject().put("inline_data", JSONObject().put("mime_type", f.mime).put("data", f.base64)))
+        parti.put(JSONObject().put("text", richiesta))
+        val corpo = JSONObject().put("contents", JSONArray().put(JSONObject().put("role", "user").put("parts", parti)))
         val c = URL("https://generativelanguage.googleapis.com/v1beta/models/$modello:generateContent").openConnection() as HttpURLConnection
         c.requestMethod = "POST"
         c.connectTimeout = 15000
-        c.readTimeout = 120000
+        c.readTimeout = 180000
         c.doOutput = true
         c.setRequestProperty("Content-Type", "application/json; charset=utf-8")
         c.setRequestProperty("x-goog-api-key", Cassaforte.leggi(prefs, "api_key").trim())
@@ -2243,26 +2294,29 @@ class Cervello private constructor(private val ctx: Context) {
         val testo = (if (codice in 200..299) c.inputStream else c.errorStream)?.bufferedReader(Charsets.UTF_8)?.use { it.readText() } ?: ""
         c.disconnect()
         if (codice !in 200..299) throw erroreGemini(codice, testo)
-        val parti = JSONObject(testo).optJSONArray("candidates")?.optJSONObject(0)?.optJSONObject("content")?.optJSONArray("parts")
+        val risposta = JSONObject(testo).optJSONArray("candidates")?.optJSONObject(0)?.optJSONObject("content")?.optJSONArray("parts")
             ?: return ""
-        return (0 until parti.length()).mapNotNull { parti.optJSONObject(it)?.optString("text") }.joinToString(" ").trim()
+        return (0 until risposta.length()).mapNotNull { risposta.optJSONObject(it)?.optString("text") }.joinToString(" ").trim()
     }
 
     /** Claude legge immagini e PDF (non audio e video). */
-    private fun claudeFile(mime: String, base64: String, richiesta: String): String {
-        val blocco = when {
-            mime in setOf("image/jpeg", "image/png", "image/gif", "image/webp") -> JSONObject().put("type", "image")
-                .put("source", JSONObject().put("type", "base64").put("media_type", mime).put("data", base64))
-            mime == "application/pdf" -> JSONObject().put("type", "document")
-                .put("source", JSONObject().put("type", "base64").put("media_type", "application/pdf").put("data", base64))
-            else -> return "Con Claude posso leggere solo testi, immagini e PDF. Per i messaggi vocali e i video scegli Gemini in Cervello."
+    private fun claudeFile(file: List<Contenuto>, richiesta: String): String {
+        val contenuto = JSONArray()
+        for (f in file) {
+            when {
+                f.mime in setOf("image/jpeg", "image/png", "image/gif", "image/webp") -> contenuto.put(JSONObject().put("type", "image")
+                    .put("source", JSONObject().put("type", "base64").put("media_type", f.mime).put("data", f.base64)))
+                f.mime == "application/pdf" -> contenuto.put(JSONObject().put("type", "document")
+                    .put("source", JSONObject().put("type", "base64").put("media_type", "application/pdf").put("data", f.base64)))
+                else -> return "Con Claude posso leggere solo testi, documenti, immagini e PDF. Per audio e video scegli Gemini in Cervello."
+            }
         }
+        contenuto.put(JSONObject().put("type", "text").put("text", richiesta))
         val modello = modelloClaude()
         val corpo = JSONObject()
             .put("model", modello)
             .put("max_tokens", 1500)
-            .put("messages", JSONArray().put(JSONObject().put("role", "user")
-                .put("content", JSONArray().put(blocco).put(JSONObject().put("type", "text").put("text", richiesta)))))
+            .put("messages", JSONArray().put(JSONObject().put("role", "user").put("content", contenuto)))
         if (modello.contains("haiku")) corpo.put("thinking", JSONObject().put("type", "disabled"))
         val blocchi = postClaude(corpo).optJSONArray("content") ?: return ""
         return (0 until blocchi.length()).mapNotNull { blocchi.optJSONObject(it) }

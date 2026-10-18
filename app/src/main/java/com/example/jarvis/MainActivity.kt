@@ -294,6 +294,10 @@ class MainActivity : Activity(), Cervello.Uscita {
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         @Suppress("DEPRECATION")
         super.onActivityResult(requestCode, resultCode, data)
+        if (resultCode == RESULT_OK && (requestCode == CODICE_GALLERIA || requestCode == CODICE_DOCUMENTO)) {
+            risultatoAllegati(data)
+            return
+        }
         if (resultCode == RESULT_OK && requestCode in listOf(CODICE_ESPORTA, CODICE_IMPORTA, CODICE_CARTELLA)) {
             risultatoDati(requestCode, data)
             return
@@ -447,13 +451,19 @@ class MainActivity : Activity(), Cervello.Uscita {
         val rigaTesto = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(16), 0, dp(6), 0)
+            setPadding(dp(4), 0, dp(6), 0)
             background = GradientDrawable().apply {
                 cornerRadius = dp(24).toFloat()
                 setStroke(dp(1), Tema.conAlfa(tema.accento, 170))
                 setColor(tema.superficie)
             }
         }
+        // ＋ per caricare foto, documenti e altri file
+        rigaTesto.addView(testoHud("＋", COLORE_ORO, 20f, 0f).apply {
+            setPadding(dp(12), dp(8), dp(8), dp(8))
+            contentDescription = "Carica foto o documenti"
+            setOnClickListener { scegliAllegato() }
+        })
         campoTesto = EditText(this).apply {
             hint = "Scrivi o tocca la sfera"
             setHintTextColor(COLORE_TENUE)
@@ -474,6 +484,13 @@ class MainActivity : Activity(), Cervello.Uscita {
             setPadding(dp(12), dp(12), dp(12), dp(12))
             setOnClickListener { inviaTestoScritto() }
         })
+        // allegati pronti per la prossima domanda
+        vistaAllegati = testoHud("", COLORE_ORO, 11f, 0.05f).apply {
+            visibility = View.GONE
+            setPadding(dp(14), dp(8), dp(14), dp(2))
+            setOnClickListener { scegliAllegato() }
+        }
+        radice.addView(vistaAllegati)
         radice.addView(rigaTesto, LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
         ).apply { topMargin = dp(10) })
@@ -631,7 +648,9 @@ class MainActivity : Activity(), Cervello.Uscita {
     }
 
     private fun inviaTestoScritto() {
-        val testo = campoTesto.text.toString().trim()
+        val testo = campoTesto.text.toString().trim().ifEmpty {
+            if (allegati.isNotEmpty()) "Cosa contiene? Descrivilo e dimmi le cose importanti." else ""
+        }
         if (testo.isEmpty()) return
         campoTesto.setText("")
         gestisciRichiesta(testo)
@@ -1174,10 +1193,12 @@ class MainActivity : Activity(), Cervello.Uscita {
         }
         pagina.titoloSezione("Permessi per le altre app")
         pagina.bottone("Accesso alle notifiche" + if (NotificheJarvis.abilitato(this)) " ✓" else "") {
-            apriImpostazione(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+            if (NotificheJarvis.abilitato(this)) apriImpostazione(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+            else guidaLimitazioni("l'accesso alle notifiche", Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
         }
         pagina.bottone("Controllo delle app (Accessibilità)" + if (AccessibilitaJarvis.istanza != null) " ✓" else "") {
-            apriImpostazione(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+            if (AccessibilitaJarvis.istanza != null) apriImpostazione(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+            else guidaLimitazioni("il controllo delle app", Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
         }
         pagina.bottone("Batteria senza limiti") {
             apriImpostazione(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName")))
@@ -1633,6 +1654,11 @@ class MainActivity : Activity(), Cervello.Uscita {
         val resoconto = pagina.casella("Ogni domenica sera, il resoconto della settimana", prefs.getBoolean("resoconto", true))
         resoconto.setOnCheckedChangeListener { _, v -> prefs.edit().putBoolean("resoconto", v).apply() }
         pagina.bottone("Fammi il resoconto adesso") { gestisciRichiesta("Fammi il resoconto della settimana.") }
+        pagina.titoloSezione("Archivio dei documenti")
+        pagina.nota("${Archivio.numero(this)} documenti. Quando carichi un file con il tasto +, Jarvis lo conserva con un riassunto per le domande future.")
+        val archivioAuto = pagina.casella("Conserva automaticamente i file caricati", prefs.getBoolean("archivio_auto", true))
+        archivioAuto.setOnCheckedChangeListener { _, v -> prefs.edit().putBoolean("archivio_auto", v).apply() }
+        pagina.bottone("Apri l'archivio") { mostraArchivio() }
         pagina.titoloSezione("Backup della memoria")
         pagina.nota("Salva ricordi, lezioni, routine, diario, note, promemoria, luoghi, voce registrata e impostazioni in un file. " +
             "Puoi metterlo su Google Drive e ripristinarlo su un altro telefono. Le chiavi API e le password non vengono copiate.")
@@ -1667,6 +1693,217 @@ class MainActivity : Activity(), Cervello.Uscita {
             aggiungiAlRegistro("Jarvis", "Statistiche azzerate.")
         }
         pagina.mostra()
+    }
+
+    // ================================================================
+    //  ALLEGATI: foto, documenti e file caricati
+    // ================================================================
+
+    private lateinit var vistaAllegati: TextView
+    private val allegati = mutableListOf<Cervello.Contenuto>()
+    private val archiviati = mutableSetOf<String>()
+    private var contestoAllegati = ""
+    private val CODICE_GALLERIA = 30
+    private val CODICE_DOCUMENTO = 31
+
+    private fun scegliAllegato() {
+        val voci = mutableListOf("Foto dalla galleria", "Scatta una foto", "Documento o file (PDF, Word, Excel, audio...)")
+        if (allegati.isNotEmpty()) voci.add("Togli gli allegati")
+        voci.add("Archivio dei documenti")
+        AlertDialog.Builder(this)
+            .setTitle("Carica")
+            .setItems(voci.toTypedArray()) { _, i ->
+                when (voci[i]) {
+                    "Foto dalla galleria" -> apriSelettore("image/*", CODICE_GALLERIA)
+                    "Scatta una foto" -> scattaAllegato()
+                    "Togli gli allegati" -> togliAllegati()
+                    "Archivio dei documenti" -> mostraArchivio()
+                    else -> apriSelettore("*/*", CODICE_DOCUMENTO)
+                }
+            }
+            .show()
+    }
+
+    private fun apriSelettore(tipo: String, codice: Int) {
+        try {
+            @Suppress("DEPRECATION")
+            startActivityForResult(
+                Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType(tipo)
+                    .putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true),
+                codice
+            )
+        } catch (e: Exception) {
+            aggiungiAlRegistro("Jarvis", "Non trovo un'app per scegliere i file.")
+        }
+    }
+
+    private fun scattaAllegato() {
+        val cartella = File(cacheDir, "foto").apply { mkdirs() }
+        val file = File(cartella, "allegato.jpg")
+        file.delete()
+        scattaFoto(file) { ok ->
+            if (!ok) return@scattaFoto
+            Thread {
+                val c = Allegati.daByte("foto " + SimpleDateFormat("d MMM HH:mm", Locale.ITALIAN).format(Date()) + ".jpg",
+                    "image/jpeg", riduciFoto(file.readBytes()))
+                runOnUiThread { if (c != null) aggiungiAllegati(listOf(c)) }
+            }.start()
+        }
+    }
+
+    /** Le foto grandi vengono ridotte a 2048 pixel: arrivano prima e costano meno. */
+    private fun riduciFoto(dati: ByteArray): ByteArray = try {
+        val misure = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        android.graphics.BitmapFactory.decodeByteArray(dati, 0, dati.size, misure)
+        if (dati.size < 2_500_000 && maxOf(misure.outWidth, misure.outHeight) <= 2560) dati else {
+            var riduzione = 1
+            while (maxOf(misure.outWidth, misure.outHeight) / (riduzione * 2) >= 2048) riduzione *= 2
+            val immagine = android.graphics.BitmapFactory.decodeByteArray(dati, 0, dati.size,
+                android.graphics.BitmapFactory.Options().apply { inSampleSize = riduzione })
+            val uscita = java.io.ByteArrayOutputStream()
+            immagine.compress(android.graphics.Bitmap.CompressFormat.JPEG, 85, uscita)
+            uscita.toByteArray()
+        }
+    } catch (e: Exception) {
+        dati
+    }
+
+    private fun risultatoAllegati(dati: Intent?) {
+        val uris = mutableListOf<Uri>()
+        dati?.clipData?.let { clip -> for (i in 0 until clip.itemCount) uris.add(clip.getItemAt(i).uri) }
+        if (uris.isEmpty()) dati?.data?.let { uris.add(it) }
+        if (uris.isEmpty()) return
+        stato.text = "Preparo i file..."
+        Thread {
+            val letti = mutableListOf<Cervello.Contenuto>()
+            val scartati = mutableListOf<String>()
+            for (uri in uris.take(8)) {
+                var c = Allegati.leggi(this, uri)
+                val letto = c
+                val base64 = letto?.base64
+                if (letto != null && letto.tipo == "immagine" && base64 != null) {
+                    // ridimensiono le foto pesanti
+                    val byte = android.util.Base64.decode(base64, android.util.Base64.NO_WRAP)
+                    if (byte.size > 2_500_000) c = Allegati.daByte(letto.titolo, "image/jpeg", riduciFoto(byte))
+                }
+                if (c == null) scartati.add(Allegati.nome(this, uri)) else letti.add(c)
+            }
+            runOnUiThread {
+                stato.text = ""
+                if (letti.isNotEmpty()) aggiungiAllegati(letti)
+                if (scartati.isNotEmpty()) aggiungiAlRegistro("Jarvis", "Non riesco a caricare ${scartati.joinToString(", ")}: troppo grande (massimo 19 MB) o illeggibile.")
+            }
+        }.start()
+    }
+
+    private fun aggiungiAllegati(nuovi: List<Cervello.Contenuto>) {
+        if (allegati.isEmpty()) contestoAllegati = ""
+        allegati.addAll(nuovi)
+        while (allegati.size > 8) allegati.removeAt(0)
+        aggiornaVistaAllegati()
+        aggiungiAlRegistro("Memoria", "Caricato: ${nuovi.joinToString(", ") { it.titolo }}. Ora chiedimi qualcosa, a voce o per iscritto.")
+        campoTesto.hint = "Chiedi qualcosa sui file caricati"
+    }
+
+    private fun togliAllegati() {
+        allegati.clear()
+        contestoAllegati = ""
+        aggiornaVistaAllegati()
+        campoTesto.hint = "Scrivi o tocca la sfera"
+    }
+
+    private fun aggiornaVistaAllegati() {
+        if (allegati.isEmpty()) {
+            vistaAllegati.visibility = View.GONE
+        } else {
+            vistaAllegati.visibility = View.VISIBLE
+            vistaAllegati.text = "📎 " + allegati.joinToString(" · ") { it.titolo.take(28) } + "   (tocca per cambiare)"
+        }
+    }
+
+    private fun gestisciConAllegati(testo: String) {
+        val file = allegati.toList()
+        aggiungiAlRegistro("Tu", "$testo  📎 ${file.size}")
+        occupato = true
+        stato.text = "Leggo ${if (file.size == 1) file[0].titolo else "${file.size} file"}..."
+        aggiornaMic()
+        val archiviaAuto = prefs.getBoolean("archivio_auto", true)
+        Thread {
+            val risposta = try {
+                cervello.analizzaContenuti(file, testo, contestoAllegati)
+            } catch (e: Exception) {
+                "Non sono riuscito a leggere i file: ${e.message}"
+            }
+            contestoAllegati += "\nD: $testo\nR: ${risposta.take(800)}"
+            cervello.registraScambioEsterno("$testo [file: ${file.joinToString(", ") { it.titolo }}]", risposta)
+            runOnUiThread {
+                occupato = false
+                stato.text = ""
+                aggiornaMic()
+                aggiungiAlRegistro("Jarvis", risposta)
+                parla(risposta)
+            }
+            // conservo i documenti nell'archivio, con un riassunto, per le domande future
+            if (archiviaAuto && !cervello.privata) {
+                for (c in file) {
+                    if (c.titolo in archiviati) continue
+                    archiviati.add(c.titolo)
+                    try {
+                        val riassunto = cervello.riassuntoPerArchivio(c)
+                        Archivio.salva(this, c, riassunto)
+                        runOnUiThread { aggiungiAlRegistro("Memoria", "${c.titolo} salvato nell'archivio: potrai chiedermelo anche più avanti.") }
+                    } catch (e: Exception) { }
+                }
+            }
+            cervello.manutenzione()
+        }.start()
+    }
+
+    private fun mostraArchivio() {
+        val elenco = Archivio.elenco(this)
+        val voci = (0 until elenco.length()).map { elenco.getJSONObject(it) }
+        if (voci.isEmpty()) {
+            aggiungiAlRegistro("Jarvis", "L'archivio è vuoto: carica un documento con il tasto + e lo conservo io.")
+            return
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Archivio · ${voci.size} documenti")
+            .setItems(voci.map { "${it.optString("nome")}\n${it.optString("riassunto").take(90)}" }.toTypedArray()) { _, i ->
+                val v = voci[i]
+                AlertDialog.Builder(this)
+                    .setTitle(v.optString("nome"))
+                    .setMessage(v.optString("data") + "\n\n" + v.optString("riassunto"))
+                    .setPositiveButton("Fai domande") { _, _ ->
+                        Archivio.carica(this, v)?.let { togliAllegati(); archiviati.add(it.titolo); aggiungiAllegati(listOf(it)) }
+                    }
+                    .setNeutralButton("Elimina") { _, _ ->
+                        aggiungiAlRegistro("Memoria", Archivio.elimina(this, v.optString("nome")))
+                    }
+                    .setNegativeButton("Chiudi", null)
+                    .show()
+            }
+            .setNegativeButton("Chiudi", null)
+            .show()
+    }
+
+    /** Guida per le "impostazioni con limitazioni" di Android (app installate fuori dal Play Store). */
+    private fun guidaLimitazioni(cosa: String, impostazione: Intent) {
+        AlertDialog.Builder(this)
+            .setTitle("Attivare $cosa")
+            .setMessage(
+                "Android protegge questa impostazione per le app installate fuori dal Play Store. Se vedi \"Impostazioni con limitazioni\":\n\n" +
+                    "1. Tocca APRI INFO APP qui sotto\n" +
+                    "2. In alto a destra tocca i tre puntini ⋮\n" +
+                    "3. Scegli \"Consenti impostazioni con limitazioni\" e conferma con impronta o PIN\n" +
+                    "4. Torna qui e tocca VAI ALL'IMPOSTAZIONE, poi attiva Jarvis\n\n" +
+                    "La voce nel menu ⋮ compare solo dopo aver provato almeno una volta ad attivare l'impostazione."
+            )
+            .setPositiveButton("Vai all'impostazione") { _, _ -> apriImpostazione(impostazione) }
+            .setNeutralButton("Apri info app") { _, _ ->
+                apriImpostazione(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName")))
+            }
+            .setNegativeButton("Chiudi", null)
+            .show()
     }
 
     /** Cerca una versione nuova su GitHub, la scarica e apre l'installazione. */
@@ -1762,6 +1999,7 @@ class MainActivity : Activity(), Cervello.Uscita {
         testo.append("\nPROMEMORIA\n").append(Promemoria.descrivi(this)).append("\n")
         testo.append("\nLISTE\n").append(Liste.descriviTutte(this)).append("\n")
         testo.append("\nAUTOMAZIONI\n").append(Automazioni.descriviTutte(this)).append("\n")
+        testo.append("\nARCHIVIO DEI DOCUMENTI\n").append(Archivio.descrivi(this)).append("\n")
         val luoghi = prefs.getString("luoghi", "[]") ?: "[]"
         testo.append("\nLUOGHI SALVATI\n").append(
             try {
@@ -1938,6 +2176,10 @@ class MainActivity : Activity(), Cervello.Uscita {
 
     private fun gestisciRichiesta(testo: String) {
         if (occupato) return
+        if (allegati.isNotEmpty()) {
+            gestisciConAllegati(testo)
+            return
+        }
         aggiungiAlRegistro("Tu", testo)
         occupato = true
         stato.text = ""
