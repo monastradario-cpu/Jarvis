@@ -34,6 +34,13 @@ jobs:
           cp -r vosk-model-small-en-us-0.15/* app/src/main/assets/model-en-us/
           echo "vosk-model-small-en-us-0.15" > app/src/main/assets/model-en-us/uuid
           du -sh app/src/main/assets/model-en-us
+          # Modello per riconoscere la voce dell'utente
+          curl -sSL -o voce.zip https://alphacephei.com/vosk/models/vosk-model-spk-0.4.zip
+          unzip -q voce.zip
+          mkdir -p app/src/main/assets/model-spk
+          cp -r vosk-model-spk-0.4/* app/src/main/assets/model-spk/
+          echo "vosk-model-spk-0.4" > app/src/main/assets/model-spk/uuid
+          du -sh app/src/main/assets/model-spk
 
       - name: Costruisci l'APK
         run: gradle assembleDebug --no-daemon --stacktrace

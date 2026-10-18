@@ -881,6 +881,30 @@ class MainActivity : Activity(), Cervello.Uscita {
             ),
             prefs.getString("sensibilita", "media") ?: "media"
         )
+        pagina.titoloSezione("Riconoscimento della voce")
+        pagina.nota(
+            if (ImprontaVocale.registrata(this)) "Voce registrata ✓ Jarvis può rispondere solo a te."
+            else "Registra la tua voce: Jarvis risponderà al comando solo se a parlare sei tu, non la TV o altre persone."
+        )
+        val soloMiaVoce = pagina.casella("Rispondi solo alla mia voce", prefs.getBoolean("verifica_voce", true))
+        val rigore = pagina.scelta(
+            listOf(
+                "rigido" to "Rigido: più sicuro, a volte non ti riconosce",
+                "normale" to "Normale",
+                "permissivo" to "Permissivo: ti riconosce sempre, ma è meno selettivo"
+            ),
+            prefs.getString("rigore_voce", "normale") ?: "normale"
+        )
+        pagina.bottone(if (ImprontaVocale.registrata(this)) "Registra di nuovo la mia voce" else "Registra la mia voce") {
+            registraVoce()
+        }
+        if (ImprontaVocale.registrata(this)) {
+            pagina.bottone("Cancella la voce registrata") {
+                ImprontaVocale.cancella(this)
+                aggiungiAlRegistro("Jarvis", "Voce registrata cancellata: ora rispondo a chiunque dica il comando.")
+            }
+        }
+
         pagina.titoloSezione("Risparmio batteria")
         val risparmio = pagina.scelta(
             listOf(
@@ -920,12 +944,59 @@ class MainActivity : Activity(), Cervello.Uscita {
                 .putBoolean("parola_attivazione", parolaAttivazione.isChecked)
                 .putString("sensibilita", sensibilita())
                 .putString("frase_attivazione", frase())
+                .putBoolean("verifica_voce", soloMiaVoce.isChecked)
+                .putString("rigore_voce", rigore())
                 .putString("risparmio", risparmio())
                 .apply()
             if (cambiata && ServizioJarvis.attivo) {
                 stopService(Intent(this, ServizioJarvis::class.java))
                 reattore.postDelayed({ ServizioJarvis.avvia(this) }, 600)
             }
+        }
+    }
+
+    // ---------- registrazione della voce ----------
+    private fun registraVoce() {
+        if (!permessoMicrofono()) {
+            requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), CODICE_MIC)
+            return
+        }
+        val frase = when (prefs.getString("frase_attivazione", "entrambi")) {
+            "ciao" -> "Ciao Jarvis"
+            "jarvis" -> "Jarvis"
+            else -> "Ehi Jarvis"
+        }
+        val totale = 5
+        val testo = TextView(this).apply {
+            text = "Preparo il microfono..."
+            textSize = 16f
+            setPadding(dp(24), dp(16), dp(24), dp(8))
+        }
+        val finestra = AlertDialog.Builder(this)
+            .setTitle("Registra la tua voce")
+            .setView(testo)
+            .setNegativeButton("Annulla") { _, _ -> ImprontaVocale.ferma() }
+            .setCancelable(false)
+            .show()
+        fun mostra(n: Int) {
+            testo.text = "Di' \"$frase\" con la tua voce normale, poi fai una pausa.\n\n" +
+                "Frasi registrate: $n di $totale\n" + "●".repeat(n) + "○".repeat(totale - n)
+        }
+        ImprontaVocale.carica(this) { m ->
+            if (m == null) {
+                finestra.dismiss()
+                aggiungiAlRegistro("Jarvis", "Non riesco a preparare il riconoscimento della voce.")
+                return@carica
+            }
+            mostra(0)
+            ImprontaVocale.registra(this, totale,
+                avanzamento = { n -> mostra(n) },
+                fine = { riuscito, messaggio ->
+                    finestra.dismiss()
+                    aggiungiAlRegistro("Jarvis", messaggio)
+                    if (riuscito) parla(messaggio)
+                }
+            )
         }
     }
 

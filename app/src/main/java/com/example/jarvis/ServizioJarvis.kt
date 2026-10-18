@@ -28,7 +28,6 @@ import android.speech.tts.UtteranceProgressListener
 import org.json.JSONObject
 import org.vosk.Model
 import org.vosk.Recognizer
-import org.vosk.android.StorageService
 import java.util.Locale
 
 /**
@@ -193,16 +192,15 @@ class ServizioJarvis : Service() {
             aggiornaNotifica("Tocca Parla per darmi un comando")
             return
         }
-        StorageService.unpack(
-            this, CARTELLA_MODELLO, "model",
-            { m: Model ->
+        // Modelli condivisi con l'app (anche quello per riconoscere la tua voce)
+        ImprontaVocale.carica(this) { m ->
+            if (m == null) {
+                aggiornaNotifica("Parola di attivazione non disponibile: tocca Parla")
+            } else {
                 modello = m
                 if (!occupato) riprendiAttesa()
-            },
-            { e: java.io.IOException ->
-                aggiornaNotifica("Parola di attivazione non disponibile: tocca Parla")
             }
-        )
+        }
     }
 
     // ---------- risparmio batteria: schermo e livello della batteria ----------
@@ -295,9 +293,8 @@ class ServizioJarvis : Service() {
         ascoltando = true
         filoAscolto = Thread {
             // Solo le frasi di attivazione: le altre parole diventano [unk] e non attivano niente.
-            val grammatica = "[\"hey jarvis\", \"hi jarvis\", \"okay jarvis\", \"ciao jarvis\", \"chow jarvis\", \"jarvis\", \"[unk]\"]"
             val riconoscitoreParola = try {
-                Recognizer(m, 16000f, grammatica).apply { setWords(true) }
+                ImprontaVocale.nuovoRiconoscitore(m)
             } catch (e: Exception) {
                 ascoltando = false
                 principale.post { aggiornaNotifica("Parola di attivazione non disponibile: tocca Parla") }
@@ -409,7 +406,19 @@ class ServizioJarvis : Service() {
             "alta" -> 0.6
             else -> 0.8
         }
-        if (sicurezza >= soglia) principale.post { if (!occupato) avviaComando() }
+        if (sicurezza < soglia) return
+
+        // Riconoscimento della voce: se attivo, risponde solo all'utente registrato
+        if (!ImprontaVocale.eLaMiaVoce(this, risultato)) {
+            principale.post {
+                if (!occupato) {
+                    aggiornaNotifica("Voce non riconosciuta: ignoro")
+                    principale.postDelayed({ if (!occupato && attivo) aggiornaNotifica("Di' \"${nomeFrase()}\" per chiamarmi") }, 4000)
+                }
+            }
+            return
+        }
+        principale.post { if (!occupato) avviaComando() }
     }
 
     // ================================================================
