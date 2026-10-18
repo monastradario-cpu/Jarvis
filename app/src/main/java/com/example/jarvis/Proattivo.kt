@@ -61,6 +61,17 @@ object Proattivo {
         try { Backup.automatico(ctx) } catch (e: Exception) { }
         if (!attivo(ctx)) return
         try { appuntamenti(ctx) } catch (e: Exception) { }
+        try { resoconto(ctx) } catch (e: Exception) { }
+        try { Aggiornamenti.controllaInBackground(ctx) } catch (e: Exception) { }
+        try {
+            // batteria per le automazioni, anche quando Jarvis non è sempre attivo
+            val b = ctx.registerReceiver(null, android.content.IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+            if (b != null) {
+                val livello = b.getIntExtra(android.os.BatteryManager.EXTRA_LEVEL, -1) * 100 /
+                    b.getIntExtra(android.os.BatteryManager.EXTRA_SCALE, 100).coerceAtLeast(1)
+                Automazioni.batteria(ctx, livello, b.getIntExtra(android.os.BatteryManager.EXTRA_PLUGGED, 0) != 0)
+            }
+        } catch (e: Exception) { }
         try { preparaCitta(ctx) } catch (e: Exception) { }
         try { pioggia(ctx) } catch (e: Exception) { }
         pulisciGiaDetti(ctx)
@@ -152,6 +163,23 @@ object Proattivo {
         t
     } catch (e: Exception) {
         null
+    }
+
+    // ================================================================
+    //  RESOCONTO DELLA SETTIMANA (domenica sera)
+    // ================================================================
+
+    private fun resoconto(ctx: Context) {
+        if (!prefs(ctx).getBoolean("resoconto", true)) return
+        val c = Calendar.getInstance()
+        if (c.get(Calendar.DAY_OF_WEEK) != Calendar.SUNDAY || c.get(Calendar.HOUR_OF_DAY) !in 19..21) return
+        val chiave = "resoconto_${c.get(Calendar.YEAR)}_${c.get(Calendar.WEEK_OF_YEAR)}"
+        if (giaDetto(ctx, chiave)) return
+        val cervello = Cervello.prendi(ctx)
+        if (cervello.chiaveAttiva().isEmpty()) return
+        segnaDetto(ctx, chiave)
+        val testo = cervello.resocontoSettimana()
+        avvisa(ctx, chiave, testo)
     }
 
     // ================================================================

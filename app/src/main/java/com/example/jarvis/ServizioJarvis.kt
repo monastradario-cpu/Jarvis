@@ -115,6 +115,7 @@ class ServizioJarvis : Service() {
                 parlatore.tts = tts
             }
         }
+        parlatore.ascoltatore = ascoltatoreVoce
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -203,11 +204,14 @@ class ServizioJarvis : Service() {
     /** Il comando scelto nel menu: "ehi" (Ehi Jarvis), "ciao" (Ciao Jarvis), "entrambi" oppure "jarvis". */
     private fun frase() = cervello.prefs.getString("frase_attivazione", "entrambi") ?: "entrambi"
 
-    private fun nomeFrase() = when (frase()) {
-        "ehi" -> "Ehi Jarvis"
-        "ciao" -> "Ciao Jarvis"
-        "jarvis" -> "Jarvis"
-        else -> "Ehi Jarvis o Ciao Jarvis"
+    private fun nomeFrase(): String {
+        val n = cervello.nomeAssistente()
+        return when (frase()) {
+            "ehi" -> "Ehi $n"
+            "ciao" -> "Ciao $n"
+            "jarvis" -> n
+            else -> "Ehi $n o Ciao $n"
+        }
     }
 
     private fun caricaModello() {
@@ -241,8 +245,13 @@ class ServizioJarvis : Service() {
                     val livello = i.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
                     val scala = i.getIntExtra(BatteryManager.EXTRA_SCALE, 100)
                     val prima = livelloBatteria
+                    val eraInCarica = inCarica
                     if (livello >= 0 && scala > 0) livelloBatteria = livello * 100 / scala
                     inCarica = i.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0) != 0
+                    // automazioni: batteria bassa, inizio e fine della ricarica
+                    if (statoNoto && eraInCarica != inCarica) Automazioni.evento(c, if (inCarica) "carica" else "fine_carica")
+                    statoNoto = true
+                    Automazioni.batteria(c, livelloBatteria, inCarica)
                     // statistiche: batteria persa mentre Jarvis ascoltava
                     if (ascoltando && !inCarica && livelloBatteria < prima) batteriaPersa += prima - livelloBatteria
                 }
@@ -257,6 +266,7 @@ class ServizioJarvis : Service() {
     }
 
     private var batteriaPersa = 0
+    private var statoNoto = false
 
     private fun cuffie() = cervello.prefs.getBoolean("cuffie", false)
     private fun inAuto() = cervello.prefs.getBoolean("in_auto", false)
@@ -354,7 +364,7 @@ class ServizioJarvis : Service() {
         filoAscolto = Thread {
             // Solo le frasi di attivazione: le altre parole diventano [unk] e non attivano niente.
             val riconoscitoreParola = try {
-                ImprontaVocale.nuovoRiconoscitore(m)
+                ImprontaVocale.nuovoRiconoscitore(this, m)
             } catch (e: Exception) {
                 ascoltando = false
                 principale.post { aggiornaNotifica("Parola di attivazione non disponibile: tocca Parla") }
@@ -455,7 +465,8 @@ class ServizioJarvis : Service() {
         if (System.currentTimeMillis() - ultimaRipresa < 2500) return
         val risultato = try { JSONObject(json) } catch (e: Exception) { return }
         val parole = risultato.optString("text").trim().split(Regex("\\s+")).filter { it.isNotBlank() }
-        val posizione = parole.indexOf("jarvis")
+        val nome = ImprontaVocale.parola(this)
+        val posizione = parole.indexOf(nome)
         if (posizione < 0) return
         val saluto = parole.getOrNull(posizione - 1)
         val salutiEhi = ImprontaVocale.SALUTI_EHI
@@ -473,7 +484,7 @@ class ServizioJarvis : Service() {
         if (elenco != null) {
             for (i in 0 until elenco.length()) {
                 val p = elenco.optJSONObject(i) ?: continue
-                if (p.optString("word") == "jarvis") sicurezza = maxOf(sicurezza, p.optDouble("conf", 0.0))
+                if (p.optString("word") == nome) sicurezza = maxOf(sicurezza, p.optDouble("conf", 0.0))
             }
         }
         val soglia = when (cervello.prefs.getString("sensibilita", "media")) {
@@ -484,7 +495,8 @@ class ServizioJarvis : Service() {
         if (sicurezza < soglia) return
 
         // Riconoscimento della voce: se attivo, risponde solo all'utente registrato
-        if (!ImprontaVocale.eLaMiaVoce(this, risultato)) {
+        val chi = if (ImprontaVocale.attiva(this)) ImprontaVocale.chiParla(this, risultato) else ""
+        if (chi == null) {
             principale.post {
                 if (!occupato) {
                     aggiornaNotifica("Voce non riconosciuta: ignoro")
@@ -494,6 +506,7 @@ class ServizioJarvis : Service() {
             return
         }
         Statistiche.attivazione(this)
+        cervello.chiParla = chi
         principale.post { if (!occupato) avviaComando() }
     }
 

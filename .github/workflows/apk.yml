@@ -43,6 +43,12 @@ jobs:
           echo "vosk-model-spk-0.4" > app/src/main/assets/model-spk/uuid
           du -sh app/src/main/assets/model-spk
 
+      - name: Scarica la libreria della voce neurale
+        run: |
+          mkdir -p app/libs
+          curl -sSL -o app/libs/sherpa-onnx.aar https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.8/sherpa-onnx-1.13.8.aar
+          ls -la app/libs
+
       - name: Costruisci l'APK
         run: |
           set -o pipefail

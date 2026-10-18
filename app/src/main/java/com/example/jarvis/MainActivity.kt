@@ -124,6 +124,26 @@ class MainActivity : Activity(), Cervello.Uscita {
     private var inAscolto = false
     @Volatile private var occupato = false
 
+    /** Ascolta la voce (di Android o neurale): quando un pezzo finisce, il Parlatore decide cosa fare. */
+    private val ascoltoVoce = object : UtteranceProgressListener() {
+        override fun onStart(utteranceId: String?) {
+            runOnUiThread { if (utteranceId?.startsWith("j") == true) { parlando = true; aggiornaMic() } }
+        }
+
+        override fun onDone(utteranceId: String?) {
+            parlatore.pezzoFinito(utteranceId)
+        }
+
+        @Deprecated("Richiesto dalle versioni vecchie di Android")
+        override fun onError(utteranceId: String?) {
+            parlatore.pezzoFinito(utteranceId)
+        }
+
+        override fun onStop(utteranceId: String?, interrupted: Boolean) {
+            parlatore.pezzoFinito(utteranceId)
+        }
+    }
+
     private fun chiaveAttiva() = cervello.chiaveAttiva()
     private fun usaClaude() = cervello.usaClaude()
     private fun pluginAttivo(id: String) = cervello.pluginAttivo(id)
@@ -161,26 +181,10 @@ class MainActivity : Activity(), Cervello.Uscita {
             if (esito == TextToSpeech.SUCCESS) {
                 tts?.let { Voce.applica(it, prefs) }
                 parlatore.tts = tts
-                tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-                    override fun onStart(utteranceId: String?) {
-                        runOnUiThread { if (utteranceId?.startsWith("j") == true) { parlando = true; aggiornaMic() } }
-                    }
-
-                    override fun onDone(utteranceId: String?) {
-                        parlatore.pezzoFinito(utteranceId)
-                    }
-
-                    @Deprecated("Richiesto dalle versioni vecchie di Android")
-                    override fun onError(utteranceId: String?) {
-                        parlatore.pezzoFinito(utteranceId)
-                    }
-
-                    override fun onStop(utteranceId: String?, interrupted: Boolean) {
-                        parlatore.pezzoFinito(utteranceId)
-                    }
-                })
+                tts?.setOnUtteranceProgressListener(ascoltoVoce)
             }
         }
+        parlatore.ascoltatore = ascoltoVoce
         // Modelli vocali pronti in anticipo (per l'interruzione con "basta") e controlli proattivi
         if (permessoMicrofono()) ImprontaVocale.carica(this) { }
         Proattivo.programma(this)
@@ -210,6 +214,11 @@ class MainActivity : Activity(), Cervello.Uscita {
 
     /** Aperta dalla tessera rapida, dal widget, dall'assistente o dalla notifica: ascolta subito, o legge il riepilogo. */
     private fun controllaRichiestaAscolto(intento: Intent?) {
+        if (intento?.getBooleanExtra("aggiorna", false) == true) {
+            intento.removeExtra("aggiorna")
+            reattore.postDelayed({ aggiornaOra() }, 500)
+            return
+        }
         if (intento?.getBooleanExtra("attiva_auto", false) == true) {
             intento.removeExtra("attiva_auto")
             if (!ServizioJarvis.attivo) accendiSempreAttivo()
@@ -355,7 +364,7 @@ class MainActivity : Activity(), Cervello.Uscita {
             setPadding(0, dp(8), dp(8), dp(8))
             setOnClickListener { mostraMemoria() }
         }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-        barra.addView(testoHud("JARVIS", COLORE_ORO, 18f, 0.5f).apply {
+        barra.addView(testoHud(cervello.nomeAssistente().uppercase(Locale.ITALIAN), COLORE_ORO, 18f, 0.5f).apply {
             gravity = Gravity.CENTER
         }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT))
         barra.addView(testoHud("SISTEMA", COLORE_ORO, 11f, 0.2f).apply {
@@ -523,6 +532,7 @@ class MainActivity : Activity(), Cervello.Uscita {
             if (batteria >= 0) append(" · BATT $batteria%")
             append(" · $plugin PLUGIN · $ricordi RICORDI")
             append(sempre)
+            if (cervello.privata) append(" · PRIVATA")
         }
     }
 
@@ -785,11 +795,11 @@ class MainActivity : Activity(), Cervello.Uscita {
         )
         pagina.titoloSezione("Gemini")
         pagina.nota("Chiave gratuita su aistudio.google.com/apikey")
-        val chiaveGemini = pagina.campo("Chiave API Gemini", prefs.getString("api_key", "") ?: "", true)
+        val chiaveGemini = pagina.campo("Chiave API Gemini", Cassaforte.leggi(prefs, "api_key"), true)
         val modelloGemini = pagina.campo("Modello Gemini", prefs.getString("modello", Cervello.MODELLO_PREDEFINITO) ?: Cervello.MODELLO_PREDEFINITO)
         pagina.titoloSezione("Claude")
         pagina.nota("Le API di Claude si pagano a parte su platform.claude.com: l'abbonamento Pro o Max non le include.")
-        val chiaveClaude = pagina.campo("Chiave API Claude", prefs.getString("chiave_claude", "") ?: "", true)
+        val chiaveClaude = pagina.campo("Chiave API Claude", Cassaforte.leggi(prefs, "chiave_claude"), true)
         val modelloClaude = pagina.campo(
             "Modello Claude",
             prefs.getString("modello_claude", Cervello.MODELLO_CLAUDE_PREDEFINITO) ?: Cervello.MODELLO_CLAUDE_PREDEFINITO
@@ -800,9 +810,9 @@ class MainActivity : Activity(), Cervello.Uscita {
             val scelto = fornitore()
             prefs.edit()
                 .putString("fornitore", scelto)
-                .putString("api_key", chiaveGemini.text.toString().trim())
+                .let { Cassaforte.scrivi(it, "api_key", chiaveGemini.text.toString().trim()) }
                 .putString("modello", modelloGemini.text.toString().trim().ifBlank { Cervello.MODELLO_PREDEFINITO })
-                .putString("chiave_claude", chiaveClaude.text.toString().trim())
+                .let { Cassaforte.scrivi(it, "chiave_claude", chiaveClaude.text.toString().trim()) }
                 .putString("modello_claude", modelloClaude.text.toString().trim().ifBlank { Cervello.MODELLO_CLAUDE_PREDEFINITO })
                 .putString("citta", citta.text.toString().trim().ifBlank { Cervello.CITTA_PREDEFINITA })
                 .apply()
@@ -887,6 +897,11 @@ class MainActivity : Activity(), Cervello.Uscita {
         var velocitaScelta = prefs.getFloat("voce_velocita", Voce.VELOCITA_PREDEFINITA)
 
         fun prova() {
+            if (VoceNeurale.attiva(this)) {
+                prefs.edit().putFloat("voce_velocita", velocitaScelta).apply()
+                parla("Buongiorno. Sono ${cervello.nomeAssistente()}, a sua disposizione.")
+                return
+            }
             val voce = tts ?: return
             Voce.applica(voce, prefs)
             voce.setPitch(tonoScelto)
@@ -925,7 +940,50 @@ class MainActivity : Activity(), Cervello.Uscita {
             return barra
         }
 
-        pagina.titoloSezione("Voce")
+        pagina.titoloSezione("Motore della voce")
+        val motore = pagina.scelta(
+            listOf(
+                "android" to "Voce del telefono (Google)",
+                "neurale" to "Voce neurale offline: molto più naturale, funziona senza internet"
+            ),
+            prefs.getString("motore_voce", "android") ?: "android"
+        )
+        val statoNeurale = TextView(this).apply { setPadding(0, dp(4), 0, 0); setTextColor(COLORE_TENUE); textSize = 13f }
+        fun scriviNeurale() {
+            val scelta = VoceNeurale.scelta(this)
+            val nome = VoceNeurale.VOCI.firstOrNull { it.id == scelta }?.nome ?: scelta
+            statoNeurale.text = "Voce neurale: $nome " + if (VoceNeurale.scaricata(this, scelta)) "✓ sul telefono" else "(da scaricare)"
+        }
+        scriviNeurale()
+        pagina.contenitore.addView(statoNeurale)
+        pagina.bottone("Scegli e scarica la voce neurale") {
+            val voci = VoceNeurale.VOCI
+            val nomi = voci.map { v -> v.nome + (if (VoceNeurale.scaricata(this, v.id)) " ✓" else " · ${v.dimensioneMb} MB") }.toTypedArray()
+            AlertDialog.Builder(this)
+                .setTitle("Voce neurale")
+                .setItems(nomi) { _, i ->
+                    val v = voci[i]
+                    prefs.edit().putString("voce_neurale", v.id).putString("motore_voce", "neurale").apply()
+                    scriviNeurale()
+                    if (VoceNeurale.scaricata(this, v.id)) {
+                        parla("Buongiorno. Sono ${cervello.nomeAssistente()}, a sua disposizione.")
+                    } else {
+                        statoNeurale.text = "Scarico ${v.nome}..."
+                        Thread {
+                            val esito = VoceNeurale.scarica(this, v.id) { p -> runOnUiThread { statoNeurale.text = "Scarico ${v.nome}: $p%" } }
+                            runOnUiThread {
+                                scriviNeurale()
+                                aggiungiAlRegistro("Jarvis", esito)
+                                if (VoceNeurale.scaricata(this, v.id)) parla("Buongiorno. Questa è la mia nuova voce.")
+                            }
+                        }.start()
+                    }
+                }
+                .setNegativeButton("Chiudi", null)
+                .show()
+        }
+        pagina.nota("Le voci neurali (Piper) sono libere e originali. Velocità e prova valgono anche per loro; il tono si regola solo con la voce del telefono.")
+        pagina.titoloSezione("Voce del telefono")
         aggiornaNomeVoce()
         pagina.contenitore.addView(nomeVoce)
         pagina.bottone("Scegli la voce") {
@@ -962,8 +1020,13 @@ class MainActivity : Activity(), Cervello.Uscita {
         }
         pagina.nota("Altre voci: Impostazioni del telefono > Sintesi vocale > Dati vocali di Google, oppure installa un altro motore vocale.")
         pagina.mostra {
-            prefs.edit().putFloat("voce_tono", tonoScelto).putFloat("voce_velocita", velocitaScelta).apply()
-            aggiungiAlRegistro("Jarvis", "Voce aggiornata.")
+            prefs.edit().putFloat("voce_tono", tonoScelto).putFloat("voce_velocita", velocitaScelta)
+                .putString("motore_voce", motore()).apply()
+            if (motore() == "neurale" && !VoceNeurale.scaricata(this, VoceNeurale.scelta(this))) {
+                aggiungiAlRegistro("Jarvis", "Scarica prima una voce neurale: fino ad allora uso la voce del telefono.")
+            } else {
+                aggiungiAlRegistro("Jarvis", "Voce aggiornata.")
+            }
         }
     }
 
@@ -987,6 +1050,19 @@ class MainActivity : Activity(), Cervello.Uscita {
         pagina.nota("Jarvis resta acceso in background con una notifica fissa: di' \"Ehi Jarvis\" oppure tocca Parla " +
             "nella notifica o la tessera Jarvis nel menu a tendina.")
         val parolaAttivazione = pagina.casella("Parola di attivazione \"Jarvis\" (offline)", prefs.getBoolean("parola_attivazione", true))
+        pagina.titoloSezione("Nome dell'assistente")
+        pagina.nota("Come vuoi chiamarlo: Jarvis, Venerdì, Max... Una sola parola. Dopo averlo cambiato provalo: se non lo riconosco scegline un altro.")
+        val nomeAssistente = pagina.campo("Nome", cervello.nomeAssistente())
+        pagina.bottone("Prova il nome (parla per 5 secondi)") {
+            prefs.edit().putString("nome_assistente", nomeAssistente.text.toString().trim().split(" ").first().ifEmpty { "Jarvis" }).apply()
+            if (!permessoMicrofono()) {
+                requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), CODICE_MIC)
+                return@bottone
+            }
+            ServizioJarvis.invia(this, ServizioJarvis.AZIONE_PAUSA)
+            aggiungiAlRegistro("Jarvis", "Di' \"Ehi ${nomeAssistente.text.toString().trim()}\" adesso...")
+            ImprontaVocale.provaNome(this) { esito -> aggiungiAlRegistro("Jarvis", esito) }
+        }
         pagina.titoloSezione("Comando di attivazione")
         val frase = pagina.scelta(
             listOf(
@@ -1023,6 +1099,35 @@ class MainActivity : Activity(), Cervello.Uscita {
         )
         pagina.bottone(if (ImprontaVocale.registrata(this)) "Registra di nuovo la mia voce" else "Registra la mia voce") {
             registraVoce()
+        }
+        pagina.titoloSezione("Voci della famiglia")
+        val famiglia = ImprontaVocale.famiglia(this)
+        pagina.nota(
+            if (famiglia.isEmpty()) "Registra anche le voci dei tuoi familiari: Jarvis risponderà anche a loro, li chiamerà per nome e terrà i loro ricordi separati."
+            else "Voci registrate: " + famiglia.joinToString(", ") { it.nome }
+        )
+        pagina.bottone("Aggiungi la voce di un familiare") {
+            val campoNome = EditText(this).apply { hint = "Nome, es. Anna" }
+            AlertDialog.Builder(this)
+                .setTitle("Chi registriamo?")
+                .setView(campoNome)
+                .setPositiveButton("Registra") { _, _ ->
+                    val n = campoNome.text.toString().trim()
+                    if (n.isNotEmpty()) registraVoce(n)
+                }
+                .setNegativeButton("Annulla", null)
+                .show()
+        }
+        if (famiglia.isNotEmpty()) {
+            pagina.bottone("Rimuovi la voce di un familiare") {
+                AlertDialog.Builder(this)
+                    .setTitle("Rimuovi")
+                    .setItems(famiglia.map { it.nome }.toTypedArray()) { _, i ->
+                        ImprontaVocale.rimuoviPersona(this, famiglia[i].nome)
+                        aggiungiAlRegistro("Jarvis", "Voce di ${famiglia[i].nome} rimossa.")
+                    }
+                    .show()
+            }
         }
         if (ImprontaVocale.registrata(this)) {
             pagina.bottone("Cancella la voce registrata") {
@@ -1088,8 +1193,11 @@ class MainActivity : Activity(), Cervello.Uscita {
         pagina.nota("Se Android non ti lascia attivare notifiche o accessibilità: Impostazioni > App > Jarvis > menu ⋮ > " +
             "Consenti impostazioni con limitazioni, poi riprova.")
         pagina.mostra {
-            val cambiata = parolaAttivazione.isChecked != prefs.getBoolean("parola_attivazione", true)
+            val nuovoNome = nomeAssistente.text.toString().trim().split(" ").first().ifEmpty { "Jarvis" }
+            val cambiata = parolaAttivazione.isChecked != prefs.getBoolean("parola_attivazione", true) ||
+                nuovoNome != cervello.nomeAssistente()
             prefs.edit()
+                .putString("nome_assistente", nuovoNome)
                 .putBoolean("parola_attivazione", parolaAttivazione.isChecked)
                 .putString("sensibilita", sensibilita())
                 .putString("frase_attivazione", frase())
@@ -1107,15 +1215,16 @@ class MainActivity : Activity(), Cervello.Uscita {
     }
 
     // ---------- registrazione della voce ----------
-    private fun registraVoce() {
+    private fun registraVoce(persona: String = "") {
         if (!permessoMicrofono()) {
             requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), CODICE_MIC)
             return
         }
+        val nome = cervello.nomeAssistente()
         val frase = when (prefs.getString("frase_attivazione", "entrambi")) {
-            "ciao" -> "Ciao Jarvis"
-            "jarvis" -> "Jarvis"
-            else -> "Ehi Jarvis"
+            "ciao" -> "Ciao $nome"
+            "jarvis" -> nome
+            else -> "Ehi $nome"
         }
         val totale = 5
         val testo = TextView(this).apply {
@@ -1124,13 +1233,13 @@ class MainActivity : Activity(), Cervello.Uscita {
             setPadding(dp(24), dp(16), dp(24), dp(8))
         }
         val finestra = AlertDialog.Builder(this)
-            .setTitle("Registra la tua voce")
+            .setTitle(if (persona.isEmpty()) "Registra la tua voce" else "Registra la voce di $persona")
             .setView(testo)
             .setNegativeButton("Annulla") { _, _ -> ImprontaVocale.ferma() }
             .setCancelable(false)
             .show()
         fun mostra(n: Int) {
-            testo.text = "Di' \"$frase\" con la tua voce normale, poi fai una pausa.\n\n" +
+            testo.text = (if (persona.isEmpty()) "" else "$persona, ") + "di' \"$frase\" con la tua voce normale, poi fai una pausa.\n\n" +
                 "Frasi registrate: $n di $totale\n" + "●".repeat(n) + "○".repeat(totale - n)
         }
         ImprontaVocale.carica(this) { m ->
@@ -1146,7 +1255,8 @@ class MainActivity : Activity(), Cervello.Uscita {
                     finestra.dismiss()
                     aggiungiAlRegistro("Jarvis", messaggio)
                     if (riuscito) parla(messaggio)
-                }
+                },
+                persona = persona
             )
         }
     }
@@ -1440,7 +1550,7 @@ class MainActivity : Activity(), Cervello.Uscita {
         pagina.nota("Home Assistant è gratuito e collega quasi tutto: luci, prese, termostati, Google Home, Alexa, Tuya/Smart Life, " +
             "Hue, Shelly, Xiaomi. Token: nel tuo profilo di Home Assistant > Sicurezza > Token di accesso a lunga durata.")
         val casaUrl = pagina.campo("Indirizzo (es. http://192.168.1.10:8123)", prefs.getString("casa_url", "") ?: "")
-        val casaToken = pagina.campo("Token di accesso", prefs.getString("casa_token", "") ?: "", true)
+        val casaToken = pagina.campo("Token di accesso", Cassaforte.leggi(prefs, "casa_token"), true)
         pagina.titoloSezione("Scorciatoie web")
         pagina.nota("Una per riga: nome = indirizzo. Per esempio:\ncancello = https://maker.ifttt.com/trigger/cancello/with/key/...\n" +
             "presa = http://192.168.1.50/relay/0?turn=toggle\nMetti POST prima dell'indirizzo se il servizio lo richiede.")
@@ -1455,7 +1565,7 @@ class MainActivity : Activity(), Cervello.Uscita {
         pagina.nota("Per Gmail serve una \"password per le app\": myaccount.google.com/apppasswords (richiede la verifica in due passaggi). " +
             "Funziona anche con Libero, Yahoo, iCloud e altre caselle IMAP. Outlook/Hotmail non accetta più queste password.")
         val email = pagina.campo("Il tuo indirizzo email", prefs.getString("posta_indirizzo", "") ?: "")
-        val emailPassword = pagina.campo("Password per le app", prefs.getString("posta_password", "") ?: "", true)
+        val emailPassword = pagina.campo("Password per le app", Cassaforte.leggi(prefs, "posta_password"), true)
         val imap = pagina.campo("Server IMAP (facoltativo)", prefs.getString("posta_imap", "") ?: "")
         val smtp = pagina.campo("Server SMTP (facoltativo)", prefs.getString("posta_smtp", "") ?: "")
 
@@ -1464,12 +1574,12 @@ class MainActivity : Activity(), Cervello.Uscita {
             "PC e telefono devono essere sulla stessa rete Wi-Fi. Per accenderlo da spento attiva il Wake-on-LAN nel BIOS. " +
             "Per mandare un file al PC: Condividi > Jarvis: invia al PC.")
         val pcIp = pagina.campo("Indirizzo del PC (es. 192.168.1.20)", prefs.getString("pc_ip", "") ?: "")
-        val pcToken = pagina.campo("Codice di collegamento", prefs.getString("pc_token", "") ?: "", true)
+        val pcToken = pagina.campo("Codice di collegamento", Cassaforte.leggi(prefs, "pc_token"), true)
         val pcMac = pagina.campo("MAC del PC, per accenderlo (facoltativo)", prefs.getString("pc_mac", "") ?: "")
         pagina.bottone("Prova il collegamento") {
-            prefs.edit().putString("pc_ip", pcIp.text.toString().trim()).putString("pc_token", pcToken.text.toString().trim())
-                .putString("casa_url", casaUrl.text.toString().trim()).putString("casa_token", casaToken.text.toString().trim())
-                .putString("posta_indirizzo", email.text.toString().trim()).putString("posta_password", emailPassword.text.toString().trim())
+            prefs.edit().putString("pc_ip", pcIp.text.toString().trim()).let { Cassaforte.scrivi(it, "pc_token", pcToken.text.toString().trim()) }
+                .putString("casa_url", casaUrl.text.toString().trim()).let { Cassaforte.scrivi(it, "casa_token", casaToken.text.toString().trim()) }
+                .putString("posta_indirizzo", email.text.toString().trim()).let { Cassaforte.scrivi(it, "posta_password", emailPassword.text.toString().trim()) }
                 .putString("posta_imap", imap.text.toString().trim()).putString("posta_smtp", smtp.text.toString().trim())
                 .apply()
             aggiungiAlRegistro("Jarvis", "Provo i collegamenti...")
@@ -1484,14 +1594,14 @@ class MainActivity : Activity(), Cervello.Uscita {
         pagina.mostra {
             prefs.edit()
                 .putString("casa_url", casaUrl.text.toString().trim())
-                .putString("casa_token", casaToken.text.toString().trim())
+                .let { Cassaforte.scrivi(it, "casa_token", casaToken.text.toString().trim()) }
                 .putString("scorciatoie", scorciatoie.text.toString().trim())
                 .putString("posta_indirizzo", email.text.toString().trim())
-                .putString("posta_password", emailPassword.text.toString().trim())
+                .let { Cassaforte.scrivi(it, "posta_password", emailPassword.text.toString().trim()) }
                 .putString("posta_imap", imap.text.toString().trim())
                 .putString("posta_smtp", smtp.text.toString().trim())
                 .putString("pc_ip", pcIp.text.toString().trim())
-                .putString("pc_token", pcToken.text.toString().trim())
+                .let { Cassaforte.scrivi(it, "pc_token", pcToken.text.toString().trim()) }
                 .putString("pc_mac", pcMac.text.toString().trim())
                 .apply()
             aggiungiAlRegistro("Jarvis", "Collegamenti salvati.")
@@ -1514,6 +1624,15 @@ class MainActivity : Activity(), Cervello.Uscita {
             setPadding(0, dp(6), 0, 0)
             setTextIsSelectable(true)
         })
+        pagina.titoloSezione("Aggiornamenti")
+        pagina.nota("Versione installata: ${Aggiornamenti.versioneInstallata(this)}. Jarvis controlla da solo ogni qualche ora se ce n'è una nuova.")
+        pagina.bottone("Cerca aggiornamenti adesso") { aggiornaOra() }
+        val autoAggiorna = pagina.casella("Avvisami quando c'è una versione nuova", prefs.getBoolean("aggiornamenti_auto", true))
+        autoAggiorna.setOnCheckedChangeListener { _, v -> prefs.edit().putBoolean("aggiornamenti_auto", v).apply() }
+        pagina.titoloSezione("Resoconto della settimana")
+        val resoconto = pagina.casella("Ogni domenica sera, il resoconto della settimana", prefs.getBoolean("resoconto", true))
+        resoconto.setOnCheckedChangeListener { _, v -> prefs.edit().putBoolean("resoconto", v).apply() }
+        pagina.bottone("Fammi il resoconto adesso") { gestisciRichiesta("Fammi il resoconto della settimana.") }
         pagina.titoloSezione("Backup della memoria")
         pagina.nota("Salva ricordi, lezioni, routine, diario, note, promemoria, luoghi, voce registrata e impostazioni in un file. " +
             "Puoi metterlo su Google Drive e ripristinarlo su un altro telefono. Le chiavi API e le password non vengono copiate.")
@@ -1548,6 +1667,32 @@ class MainActivity : Activity(), Cervello.Uscita {
             aggiungiAlRegistro("Jarvis", "Statistiche azzerate.")
         }
         pagina.mostra()
+    }
+
+    /** Cerca una versione nuova su GitHub, la scarica e apre l'installazione. */
+    private fun aggiornaOra() {
+        aggiungiAlRegistro("Jarvis", "Cerco aggiornamenti...")
+        Thread {
+            val nuova = try { Aggiornamenti.controlla(this) } catch (e: Exception) { null }
+            if (nuova == null) {
+                runOnUiThread { aggiungiAlRegistro("Jarvis", "Hai già l'ultima versione (${Aggiornamenti.versioneInstallata(this)}).") }
+                return@Thread
+            }
+            runOnUiThread { stato.text = "Scarico la versione ${nuova.numero}..." }
+            val file = try {
+                Aggiornamenti.scarica(this, nuova) { p -> runOnUiThread { stato.text = "Scarico la versione ${nuova.numero}: $p%" } }
+            } catch (e: Exception) { null }
+            runOnUiThread {
+                stato.text = ""
+                if (file == null) {
+                    aggiungiAlRegistro("Jarvis", "Non sono riuscito a scaricare l'aggiornamento. Riprova più tardi.")
+                } else if (!Aggiornamenti.installa(this, file)) {
+                    aggiungiAlRegistro("Jarvis", "Permetti a Jarvis di installare app (si è aperta la pagina), poi torna qui e tocca di nuovo Cerca aggiornamenti.")
+                } else {
+                    aggiungiAlRegistro("Jarvis", "Conferma l'installazione della versione ${nuova.numero}: ricordi e impostazioni restano.")
+                }
+            }
+        }.start()
     }
 
     private fun risultatoDati(codice: Int, dati: Intent?) {
@@ -1615,6 +1760,8 @@ class MainActivity : Activity(), Cervello.Uscita {
             }
         }
         testo.append("\nPROMEMORIA\n").append(Promemoria.descrivi(this)).append("\n")
+        testo.append("\nLISTE\n").append(Liste.descriviTutte(this)).append("\n")
+        testo.append("\nAUTOMAZIONI\n").append(Automazioni.descriviTutte(this)).append("\n")
         val luoghi = prefs.getString("luoghi", "[]") ?: "[]"
         testo.append("\nLUOGHI SALVATI\n").append(
             try {
@@ -1795,6 +1942,7 @@ class MainActivity : Activity(), Cervello.Uscita {
         occupato = true
         stato.text = ""
         aggiornaMic()
+        cervello.chiParla = ""
         parlatore.inizia()
         risposteParziale = StringBuilder()
 

@@ -23,6 +23,8 @@ class Parlatore(
     private val alInterrotto: (vuoleParlare: Boolean) -> Unit
 ) {
     var tts: TextToSpeech? = null
+    /** Lo stesso ascoltatore usato per la voce di Android, per la voce neurale. */
+    var ascoltatore: android.speech.tts.UtteranceProgressListener? = null
 
     private val principale = Handler(Looper.getMainLooper())
     private val buffer = StringBuilder()
@@ -83,6 +85,7 @@ class Parlatore(
         buffer.setLength(0)
         Interruttore.ferma()
         try { tts?.stop() } catch (e: Exception) { }
+        VoceNeurale.ferma()
     }
 
     /** Da chiamare nell'UtteranceProgressListener (onDone, onError, onStop). */
@@ -130,9 +133,11 @@ class Parlatore(
         val pulita = pulisci(frase)
         if (pulita.isBlank()) return
         detto.append(pulita).append(' ')
-        val voce = tts ?: return
+        val neurale = VoceNeurale.attiva(ctx)
+        val voce = tts
+        if (voce == null && !neurale) return
         if (primo) {
-            Voce.applica(voce, prefs)
+            if (voce != null) Voce.applica(voce, prefs)
             if (prefs.getBoolean("interrompibile", true)) {
                 Interruttore.avvia(ctx, detto) { vuoleParlare ->
                     principale.post {
@@ -144,7 +149,14 @@ class Parlatore(
             }
         }
         val id = "j${generazione}_${numero++}"
-        val esito = voce.speak(pulita, if (primo) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD, null, id)
+        if (neurale) {
+            if (primo) try { voce?.stop() } catch (e: Exception) { }
+            VoceNeurale.parla(ctx, pulita, primo, id, ascoltatore)
+            primo = false
+            inCoda++
+            return
+        }
+        val esito = voce!!.speak(pulita, if (primo) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD, null, id)
         primo = false
         if (esito == TextToSpeech.SUCCESS) inCoda++
     }

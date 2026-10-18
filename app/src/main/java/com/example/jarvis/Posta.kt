@@ -28,7 +28,7 @@ class Posta(private val prefs: SharedPreferences) {
     private class Server(val imap: String, val smtp: String, val portaSmtp: Int)
 
     private fun indirizzo() = (prefs.getString("posta_indirizzo", "") ?: "").trim()
-    private fun password() = (prefs.getString("posta_password", "") ?: "").replace(" ", "")
+    private fun password() = Cassaforte.leggi(prefs, "posta_password").replace(" ", "")
     fun configurata() = indirizzo().contains("@") && password().isNotEmpty()
 
     private val AVVISO = "L'email non è collegata. In SISTEMA, COLLEGAMENTI inserisci il tuo indirizzo e una password per le app " +

@@ -42,9 +42,10 @@ object Interruttore {
         }
         attivo = true
         val app = ctx.applicationContext
+        val nome = ImprontaVocale.parola(app)
         filo = Thread {
             val riconoscitore = try {
-                Recognizer(modello, 16000f, ImprontaVocale.GRAMMATICA_INTERRUZIONE).apply {
+                Recognizer(modello, 16000f, ImprontaVocale.grammaticaInterruzione(app)).apply {
                     setWords(true)
                     ImprontaVocale.modelloVoce?.let { setSpeakerModel(it) }
                 }
@@ -98,7 +99,7 @@ object Interruttore {
                 for (i in 0 until parole.length()) {
                     val p = parole.optJSONObject(i) ?: continue
                     val w = p.optString("word")
-                    if ((w in PAROLE_STOP || w == "jarvis") && p.optDouble("conf", 0.0) >= minima) trovata = w
+                    if ((w in PAROLE_STOP || w == nome) && p.optDouble("conf", 0.0) >= minima) trovata = w
                 }
                 val parola = trovata ?: return false
                 if (voce == null) {
@@ -107,7 +108,7 @@ object Interruttore {
                     if (sta.contains(parola)) return false
                 }
                 attivo = false
-                quando(parola == "jarvis")
+                quando(parola == nome)
                 return true
             }
 

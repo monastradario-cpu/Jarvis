@@ -116,7 +116,17 @@ class Cervello private constructor(private val ctx: Context) {
         Plugin("email", "Email: leggere, scrivere e rispondere",
             listOf("leggi_email", "invia_email", "rispondi_email")),
         Plugin("pc", "Collegamento al PC Windows",
-            listOf("pc", "pc_accendi"))
+            listOf("pc", "pc_accendi")),
+        Plugin("sistema", "Non disturbare, suoneria e luminosità",
+            listOf("non_disturbare", "suoneria", "luminosita")),
+        Plugin("automazioni", "Automazioni: se succede questo, fai quello",
+            listOf("crea_automazione", "elenca_automazioni", "elimina_automazione")),
+        Plugin("liste", "Liste: spesa, cose da fare...",
+            listOf("lista_aggiungi", "lista_leggi", "lista_togli", "lista_invia")),
+        Plugin("traduttore", "Traduttore simultaneo",
+            listOf("traduttore")),
+        Plugin("resoconto", "Resoconto della settimana",
+            listOf("resoconto_settimana"))
     )
     // Gli strumenti della memoria (ricorda, lezioni, routine, diario) sono sempre attivi.
 
@@ -134,8 +144,7 @@ class Cervello private constructor(private val ctx: Context) {
     fun usaClaude() = prefs.getString("fornitore", "gemini") == "claude"
 
     fun chiaveAttiva(): String =
-        (if (usaClaude()) prefs.getString("chiave_claude", "") else prefs.getString("api_key", ""))
-            ?.trim() ?: ""
+        (if (usaClaude()) Cassaforte.leggi(prefs, "chiave_claude") else Cassaforte.leggi(prefs, "api_key")).trim()
 
     private val integrazioni by lazy { Integrazioni(ctx, prefs, ::avvia, ::chiediPermessoGenerico) }
     private val casa by lazy { Casa(prefs) }
@@ -165,6 +174,49 @@ class Cervello private constructor(private val ctx: Context) {
     @Volatile private var pezzoAttuale: ((String) -> Unit)? = null
     @Volatile private var pezziInviati = false
     @Volatile private var richiestaCorrente = ""
+    /** Chi sta parlando (riconosciuto dalla voce): vuoto per l'utente principale, altrimenti il nome del familiare. */
+    @Volatile var chiParla = ""
+
+    fun nomeAssistente() = (prefs.getString("nome_assistente", "Jarvis") ?: "Jarvis").trim().ifEmpty { "Jarvis" }
+
+    internal fun contesto(): Context = ctx
+
+    // ---------- modalità privata: niente diario, niente ricordi, niente salvataggi ----------
+    @Volatile var privata = false
+        private set
+    private var inizioPrivataGemini = 0
+    private var inizioPrivataClaude = 0
+    private var ultimaPrivata = 0L
+    private var daChiuderePrivata = false
+
+    internal fun modalitaPrivata(attiva: Boolean): String {
+        if (attiva) {
+            if (!privata) {
+                inizioPrivataGemini = (messaggi.length() - 1).coerceAtLeast(1)
+                inizioPrivataClaude = (messaggiClaude.length() - 1).coerceAtLeast(0)
+                // la conversazione privata parte da una domanda dell'utente: torno all'ultima
+                while (inizioPrivataClaude > 0 && !eDomandaUtente(messaggiClaude.getJSONObject(inizioPrivataClaude))) inizioPrivataClaude--
+                while (inizioPrivataGemini > 1 && messaggi.getJSONObject(inizioPrivataGemini).optString("role") != "user") inizioPrivataGemini--
+            }
+            privata = true
+            ultimaPrivata = System.currentTimeMillis()
+            return "Modalità privata attiva: da ora non ricordo e non salvo niente di quello che diciamo, finché non mi dice di uscire."
+        }
+        if (!privata) return "La modalità privata non era attiva."
+        daChiuderePrivata = true
+        return "Modalità privata finita: ho dimenticato tutto quello che ci siamo detti."
+    }
+
+    /** Alla fine della risposta: chiude la modalità privata togliendo dalla memoria quella parte di conversazione. */
+    private fun chiudiPrivataSeServe() {
+        val scaduta = privata && System.currentTimeMillis() - ultimaPrivata > 30 * 60_000L
+        if (!daChiuderePrivata && !scaduta) return
+        while (messaggi.length() > inizioPrivataGemini && messaggi.length() > 1) messaggi.remove(messaggi.length() - 1)
+        while (messaggiClaude.length() > inizioPrivataClaude) messaggiClaude.remove(messaggiClaude.length() - 1)
+        privata = false
+        daChiuderePrivata = false
+    }
+
     // Se lo streaming dà problemi con un fornitore, per questa sessione si torna alle risposte normali
     @Volatile private var flussoGuasto = false
     private fun usaFlusso() = !flussoGuasto && prefs.getBoolean("streaming", true)
@@ -179,6 +231,8 @@ class Cervello private constructor(private val ctx: Context) {
         fontiUltimaRisposta.clear()
         richiestaCorrente = testo
         val inizio = System.currentTimeMillis()
+        if (privata && inizio - ultimaPrivata > 30 * 60_000L) chiudiPrivataSeServe()
+        if (privata) ultimaPrivata = inizio
 
         // 1. Comandi semplici: subito, anche offline e senza chiave
         val rapida = if (prefs.getBoolean("comandi_rapidi", true)) {
@@ -187,6 +241,7 @@ class Cervello private constructor(private val ctx: Context) {
         if (rapida != null) {
             scriviNelDiario(testo, rapida, "rapida")
             registraScambioLocale(testo, rapida)
+            chiudiPrivataSeServe()
             salvaConversazioni()
             Statistiche.richiesta(ctx, "rapida", System.currentTimeMillis() - inizio, strumentiUsati)
             return Risposta(rapida, emptyList())
@@ -215,6 +270,7 @@ class Cervello private constructor(private val ctx: Context) {
         }
         val fonti = fontiUltimaRisposta.toList()
         scriviNelDiario(testo, r)
+        chiudiPrivataSeServe()
         salvaConversazioni()
         Statistiche.richiesta(ctx, if (errore) "errore" else "ia", System.currentTimeMillis() - inizio, strumentiUsati)
         Risposta(r, fonti)
@@ -241,6 +297,7 @@ class Cervello private constructor(private val ctx: Context) {
 
     /** Dopo ogni risposta: riordina la memoria e, ogni tanto, impara dal diario. */
     fun manutenzione() {
+        if (privata) return
         try {
             manutenzioneMemoria()
         } catch (e: Exception) {
@@ -322,12 +379,19 @@ class Cervello private constructor(private val ctx: Context) {
         val pluginAttivi = PLUGIN.filter { pluginAttivo(it.id) && (it.id != "ricerca" || usaClaude()) }
 
         val p = StringBuilder()
-        p.append("Sei Jarvis, l'assistente vocale personale dell'utente, sul suo telefono Android. ")
+        p.append("Sei ${nomeAssistente()}, l'assistente vocale personale dell'utente, sul suo telefono Android. ")
         p.append("Rispondi sempre in italiano, con frasi brevi e naturali da leggere ad alta voce: ")
         p.append("niente elenchi, niente asterischi, niente emoji, niente link. ")
         p.append("Usa gli strumenti quando servono per agire sul telefono e non inventare risultati. ")
         p.append("Adesso è $adesso. La città predefinita per il meteo è $citta.\n\n")
         p.append("PERSONALITÀ\n").append(personalita()).append("\n\n")
+        if (chiParla.isNotEmpty()) {
+            p.append("CHI PARLA: in questo momento ti parla $chiParla, un familiare dell'utente (riconosciuto dalla voce). ")
+            p.append("Rivolgiti a $chiParla per nome; i ricordi senza [nome] riguardano l'utente principale, quelli con [$chiParla] riguardano lui o lei.\n\n")
+        }
+        if (privata) {
+            p.append("MODALITÀ PRIVATA ATTIVA: non salvare ricordi, lezioni o routine; quando l'utente vuole uscire usa modalita_privata.\n\n")
+        }
         if (prefs.getBoolean("in_auto", false)) {
             p.append("SITUAZIONE: l'utente è IN AUTO e sta guidando. Rispondi con al massimo due frasi brevi, niente domande ")
             p.append("di approfondimento, non chiedergli di guardare o toccare lo schermo. Per la strada usa naviga.\n\n")
@@ -403,6 +467,14 @@ class Cervello private constructor(private val ctx: Context) {
         if (pluginAttivo("pc")) {
             p.append("- Per il computer dell'utente usa pc (aprire programmi o siti, volume, musica, bloccare, spegnere, scrivere testo) e pc_accendi per accenderlo.\n")
         }
+        if (pluginAttivo("automazioni")) {
+            p.append("- Per \"quando succede X fai Y\" (arrivo o uscita da un luogo, un orario ricorrente, batteria bassa, auto, cuffie, ricarica) usa crea_automazione: ")
+            p.append("le istruzioni sono una frase che eseguirai tu quando scatta.\n")
+        }
+        if (pluginAttivo("sistema")) p.append("- Per non disturbare, silenzioso, vibrazione e luminosità usa non_disturbare, suoneria e luminosita.\n")
+        if (pluginAttivo("liste")) p.append("- Per la lista della spesa e altre liste usa lista_aggiungi, lista_leggi, lista_togli e lista_invia.\n")
+        if (pluginAttivo("traduttore")) p.append("- Se l'utente deve parlare con qualcuno in un'altra lingua, apri il traduttore simultaneo con traduttore.\n")
+        p.append("- Se l'utente chiede di non ricordare questa conversazione, usa modalita_privata.\n")
         p.append("\nRICHIESTE IN PIÙ PASSAGGI\n")
         p.append("- Se la richiesta ha più parti (per esempio \"prenota un tavolo e scrivilo a Marco\"), dividila in passi ed eseguili tutti, uno alla volta.\n")
         p.append("- Dopo ogni azione su un'altra app guarda lo SCHERMO DOPO L'AZIONE che ricevi: controlla che il passo sia riuscito prima di andare avanti.\n")
@@ -647,7 +719,7 @@ class Cervello private constructor(private val ctx: Context) {
 
     /** Risposta di Claude in streaming: il testo arriva a pezzi e Jarvis inizia a parlare subito. */
     private fun postClaudeFlusso(corpo: JSONObject, alPezzo: (String) -> Unit): JSONObject {
-        val chiave = (prefs.getString("chiave_claude", "") ?: "").trim()
+        val chiave = Cassaforte.leggi(prefs, "chiave_claude").trim()
         val connessione = URL(URL_CLAUDE).openConnection() as HttpURLConnection
         connessione.requestMethod = "POST"
         connessione.connectTimeout = 15000
@@ -753,7 +825,7 @@ class Cervello private constructor(private val ctx: Context) {
     }
 
     private fun postClaude(corpo: JSONObject): JSONObject {
-        val chiave = (prefs.getString("chiave_claude", "") ?: "").trim()
+        val chiave = Cassaforte.leggi(prefs, "chiave_claude").trim()
         val connessione = URL(URL_CLAUDE).openConnection() as HttpURLConnection
         connessione.requestMethod = "POST"
         connessione.connectTimeout = 15000
@@ -900,7 +972,7 @@ class Cervello private constructor(private val ctx: Context) {
     /** Risposta di Gemini in streaming: il testo arriva a pezzi e Jarvis inizia a parlare subito. */
     private fun postGeminiFlusso(corpo: JSONObject, alPezzo: (String) -> Unit): JSONObject {
         val base = (prefs.getString("base_url", URL_PREDEFINITO) ?: URL_PREDEFINITO).trim().trimEnd('/')
-        val chiave = (prefs.getString("api_key", "") ?: "").trim()
+        val chiave = Cassaforte.leggi(prefs, "api_key").trim()
         val connessione = URL("$base/chat/completions").openConnection() as HttpURLConnection
         connessione.requestMethod = "POST"
         connessione.connectTimeout = 15000
@@ -989,7 +1061,7 @@ class Cervello private constructor(private val ctx: Context) {
 
     private fun postGemini(corpo: JSONObject): JSONObject {
         val base = (prefs.getString("base_url", URL_PREDEFINITO) ?: URL_PREDEFINITO).trim().trimEnd('/')
-        val chiave = (prefs.getString("api_key", "") ?: "").trim()
+        val chiave = Cassaforte.leggi(prefs, "api_key").trim()
         val connessione = URL("$base/chat/completions").openConnection() as HttpURLConnection
         connessione.requestMethod = "POST"
         connessione.connectTimeout = 15000
@@ -1085,6 +1157,7 @@ class Cervello private constructor(private val ctx: Context) {
     }
 
     private fun salvaConversazioni() {
+        if (privata) return
         scriviFile("conversazione_claude.json", messaggiClaude.toString())
         scriviFile("conversazione_gemini.json", messaggi.toString())
     }
@@ -1098,12 +1171,14 @@ class Cervello private constructor(private val ctx: Context) {
     }
 
     private fun scriviNelDiario(domanda: String, risposta: String, tipo: String = "ia") {
+        if (privata) return
         val voce = JSONObject()
             .put("t", SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.ITALIAN).format(Date()))
             .put("d", domanda)
             .put("r", risposta.take(300))
             .put("s", JSONArray(strumentiUsati.distinct()))
             .put("k", tipo)
+            .put("u", chiParla)
         val diario = leggiDiario()
         diario.put(voce)
         val inizio = (diario.length() - MAX_DIARIO).coerceAtLeast(0)
@@ -1609,6 +1684,52 @@ class Cervello private constructor(private val ctx: Context) {
                 ), listOf("azione")),
             strumento("pc_accendi", "Accende il computer da remoto (Wake-on-LAN).",
                 listOf(p("motivo", "string", "Facoltativo"))),
+            // --- Sistema ---
+            strumento("non_disturbare", "Attiva o disattiva la modalità non disturbare.",
+                listOf(p("attiva", "boolean", "true per attivarla, false per disattivarla")), listOf("attiva")),
+            strumento("suoneria", "Cambia la suoneria del telefono.",
+                listOf(p("modalita", "string", "normale, vibrazione oppure silenzioso")), listOf("modalita")),
+            strumento("luminosita", "Cambia la luminosità dello schermo.",
+                listOf(p("valore", "string", "percentuale (es. 40), alza, abbassa, massima, minima oppure automatica")), listOf("valore")),
+            // --- Automazioni ---
+            strumento("crea_automazione", "Crea un'automazione: quando succede qualcosa, Jarvis esegue da solo delle istruzioni.",
+                listOf(
+                    p("nome", "string", "Nome breve, es. arrivo a casa"),
+                    p("quando", "string", "orario, arrivo, uscita, batteria, auto, fine_auto, cuffie, carica oppure fine_carica"),
+                    p("valore", "string", "Per orario: HH:MM. Per batteria: la soglia in percentuale"),
+                    p("luogo", "string", "Per arrivo e uscita: luogo salvato (es. casa) o indirizzo"),
+                    p("giorni", "string", "Per orario: tutti, feriali, weekend oppure giorni come lun,mer,ven"),
+                    p("istruzioni", "string", "Cosa fare, in italiano, es. accendi le luci del soggiorno e leggimi i messaggi")
+                ), listOf("quando", "istruzioni")),
+            strumento("elenca_automazioni", "Elenca le automazioni create.",
+                listOf(p("filtro", "string", "Facoltativo"))),
+            strumento("elimina_automazione", "Elimina le automazioni che contengono una parola, oppure tutte.",
+                listOf(p("parola", "string", "Parola da cercare, oppure tutte")), listOf("parola")),
+            // --- Liste ---
+            strumento("lista_aggiungi", "Aggiunge una o più cose a una lista (spesa, cose da fare, regali...).",
+                listOf(
+                    p("lista", "string", "Nome della lista, es. spesa"),
+                    p("cosa", "string", "Cose da aggiungere, separate da virgola")
+                ), listOf("lista", "cosa")),
+            strumento("lista_leggi", "Legge una lista, oppure tutte se il nome è vuoto.",
+                listOf(p("lista", "string", "Nome della lista; vuoto per tutte"))),
+            strumento("lista_togli", "Toglie una cosa da una lista, oppure la svuota con tutto.",
+                listOf(
+                    p("lista", "string", "Nome della lista"),
+                    p("cosa", "string", "Cosa togliere, oppure tutto")
+                ), listOf("lista", "cosa")),
+            strumento("lista_invia", "Manda una lista su WhatsApp a un contatto.",
+                listOf(
+                    p("lista", "string", "Nome della lista"),
+                    p("contatto", "string", "Nome in rubrica oppure numero")
+                ), listOf("lista", "contatto")),
+            // --- Traduttore, resoconto, privacy ---
+            strumento("traduttore", "Apre il traduttore simultaneo per parlare con una persona in un'altra lingua.",
+                listOf(p("lingua", "string", "Lingua dell'altra persona, es. inglese")), listOf("lingua")),
+            strumento("resoconto_settimana", "Prepara il resoconto della settimana: cosa ha fatto l'utente e cosa lo aspetta.",
+                listOf(p("tipo", "string", "Facoltativo"))),
+            strumento("modalita_privata", "Attiva o disattiva la modalità privata: niente diario, ricordi o salvataggi.",
+                listOf(p("attiva", "boolean", "true per attivarla, false per uscire e dimenticare la conversazione")), listOf("attiva")),
             strumento("conferma_azione",
                 "Comunica la risposta dell'utente a un'azione in attesa di conferma (apertura di un'app, cancellazioni).",
                 listOf(p("risposta", "string", "sì se l'utente ha confermato, no se ha rifiutato")), listOf("risposta"))
@@ -1779,6 +1900,35 @@ class Cervello private constructor(private val ctx: Context) {
             "guarda" -> guarda(a.optString("domanda"))
             "riepilogo_giornata" -> riepilogoGiornata()
             "cerca_ricordi" -> cercaRicordi(a.optString("testo"))
+            "non_disturbare" -> suUi { Sistema.nonDisturbare(lanciatore(), a.optBoolean("attiva", true)) }
+            "suoneria" -> suUi { Sistema.suoneria(lanciatore(), a.optString("modalita")) }
+            "luminosita" -> suUi { Sistema.luminosita(lanciatore(), a.optString("valore")) }
+            "crea_automazione" -> {
+                if (privata) return "In modalità privata non creo automazioni."
+                val tipo = Automazioni.normalizzaTipo(a.optString("quando"))
+                    ?: return "Non ho capito quando deve scattare. Posso: a un orario, arrivo o uscita da un luogo, batteria bassa, auto, cuffie, ricarica."
+                var luogo: Triple<String, Double, Double>? = null
+                if (tipo == "arrivo" || tipo == "uscita") {
+                    Promemoria.permessiPosizioneMancanti(ctx)?.let { return chiediPermessoGenerico(it, "usare la posizione") }
+                    luogo = integrazioni.coordinate(a.optString("luogo"))
+                }
+                Automazioni.crea(ctx, a.optString("nome"), tipo, a.optString("valore"), a.optString("giorni"), a.optString("istruzioni"), luogo)
+            }
+            "elenca_automazioni" -> Automazioni.descriviTutte(ctx)
+            "elimina_automazione" -> Automazioni.elimina(ctx, a.optString("parola"))
+            "lista_aggiungi" -> Liste.aggiungi(ctx, a.optString("lista"), a.optString("cosa"))
+            "lista_leggi" -> Liste.leggi(ctx, a.optString("lista"))
+            "lista_togli" -> Liste.togli(ctx, a.optString("lista"), a.optString("cosa"))
+            "lista_invia" -> {
+                val testoLista = Liste.testo(ctx, a.optString("lista")) ?: return "La lista ${Liste.nome(a.optString("lista"))} è vuota."
+                inviaWhatsapp(a.optString("contatto"), testoLista)
+            }
+            "traduttore" -> avvia(
+                Intent(ctx, Traduttore::class.java).putExtra("lingua", a.optString("lingua")),
+                "Ho aperto il traduttore simultaneo: l'utente parla in italiano, l'altra persona nella sua lingua."
+            )
+            "resoconto_settimana" -> resocontoSettimana()
+            "modalita_privata" -> modalitaPrivata(a.optBoolean("attiva", true))
             "attendi" -> {
                 Thread.sleep(a.optInt("secondi", 2).coerceIn(1, 10) * 1000L)
                 "Ho aspettato."
@@ -2025,6 +2175,133 @@ class Cervello private constructor(private val ctx: Context) {
         val livello = gestore.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY)
         val inCarica = Build.VERSION.SDK_INT >= 23 && gestore.isCharging
         return "Batteria al $livello per cento" + (if (inCarica) ", in carica." else ".")
+    }
+
+    // ================================================================
+    //  CONTENUTI CONDIVISI, TRADUZIONI E RESOCONTO
+    // ================================================================
+
+    /** Qualcosa condiviso con Jarvis da un'altra app. tipo: testo, link, immagine, pdf, audio, video, file */
+    class Contenuto(val tipo: String, val titolo: String, val testo: String, val base64: String?, val mime: String)
+
+    /** Il testo leggibile di una pagina web. */
+    fun testoDellaPagina(url: String): String {
+        val c = URL(url).openConnection() as HttpURLConnection
+        c.connectTimeout = 10000
+        c.readTimeout = 15000
+        c.instanceFollowRedirects = true
+        c.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 14) Jarvis")
+        val html = try {
+            c.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+        } finally {
+            c.disconnect()
+        }
+        val titolo = Regex("(?is)<title[^>]*>(.*?)</title>").find(html)?.groupValues?.get(1)?.trim().orEmpty()
+        val corpo = html
+            .replace(Regex("(?is)<(script|style|noscript|svg|nav|footer|header)[^>]*>.*?</\\1>"), " ")
+            .replace(Regex("(?i)<br\\s*/?>|</p>|</h[1-6]>|</li>"), "\n")
+            .replace(Regex("<[^>]+>"), " ")
+            .replace("&nbsp;", " ").replace("&amp;", "&").replace("&quot;", "\"").replace("&#39;", "'")
+            .replace("&lt;", "<").replace("&gt;", ">")
+            .replace(Regex("[ \\t]+"), " ")
+            .replace(Regex("\\n\\s*\\n+"), "\n")
+            .trim()
+        return (if (titolo.isNotEmpty()) "Titolo: $titolo\n" else "") + corpo.take(60000)
+    }
+
+    /** Riassume, traduce o risponde a domande su un contenuto condiviso. */
+    fun analizzaContenuto(c: Contenuto, istruzione: String): String {
+        if (chiaveAttiva().isEmpty()) return "Manca la chiave API: inseriscila in Cervello."
+        val richiesta = "$istruzione\nRispondi in italiano, in modo chiaro e senza simboli di formattazione."
+        val inizio = System.currentTimeMillis()
+        val r = when {
+            c.base64 == null -> chiamaSemplice("$richiesta\n\nCONTENUTO (${c.titolo}):\n${c.testo.take(60000)}", 1500)
+            usaClaude() -> claudeFile(c.mime, c.base64, richiesta)
+            else -> geminiFile(c.mime, c.base64, richiesta)
+        }
+        Statistiche.richiesta(ctx, "ia", System.currentTimeMillis() - inizio, listOf("condividi_${c.tipo}"))
+        return r.ifBlank { "Non ho trovato niente da dire su questo contenuto." }
+    }
+
+    /** Gemini (API nativa) legge immagini, PDF, audio e video direttamente. */
+    private fun geminiFile(mime: String, base64: String, richiesta: String): String {
+        val modello = prefs.getString("modello", MODELLO_PREDEFINITO) ?: MODELLO_PREDEFINITO
+        val corpo = JSONObject().put("contents", JSONArray().put(JSONObject()
+            .put("role", "user")
+            .put("parts", JSONArray()
+                .put(JSONObject().put("inline_data", JSONObject().put("mime_type", mime).put("data", base64)))
+                .put(JSONObject().put("text", richiesta)))))
+        val c = URL("https://generativelanguage.googleapis.com/v1beta/models/$modello:generateContent").openConnection() as HttpURLConnection
+        c.requestMethod = "POST"
+        c.connectTimeout = 15000
+        c.readTimeout = 120000
+        c.doOutput = true
+        c.setRequestProperty("Content-Type", "application/json; charset=utf-8")
+        c.setRequestProperty("x-goog-api-key", Cassaforte.leggi(prefs, "api_key").trim())
+        c.outputStream.use { it.write(corpo.toString().toByteArray(Charsets.UTF_8)) }
+        val codice = c.responseCode
+        val testo = (if (codice in 200..299) c.inputStream else c.errorStream)?.bufferedReader(Charsets.UTF_8)?.use { it.readText() } ?: ""
+        c.disconnect()
+        if (codice !in 200..299) throw erroreGemini(codice, testo)
+        val parti = JSONObject(testo).optJSONArray("candidates")?.optJSONObject(0)?.optJSONObject("content")?.optJSONArray("parts")
+            ?: return ""
+        return (0 until parti.length()).mapNotNull { parti.optJSONObject(it)?.optString("text") }.joinToString(" ").trim()
+    }
+
+    /** Claude legge immagini e PDF (non audio e video). */
+    private fun claudeFile(mime: String, base64: String, richiesta: String): String {
+        val blocco = when {
+            mime in setOf("image/jpeg", "image/png", "image/gif", "image/webp") -> JSONObject().put("type", "image")
+                .put("source", JSONObject().put("type", "base64").put("media_type", mime).put("data", base64))
+            mime == "application/pdf" -> JSONObject().put("type", "document")
+                .put("source", JSONObject().put("type", "base64").put("media_type", "application/pdf").put("data", base64))
+            else -> return "Con Claude posso leggere solo testi, immagini e PDF. Per i messaggi vocali e i video scegli Gemini in Cervello."
+        }
+        val modello = modelloClaude()
+        val corpo = JSONObject()
+            .put("model", modello)
+            .put("max_tokens", 1500)
+            .put("messages", JSONArray().put(JSONObject().put("role", "user")
+                .put("content", JSONArray().put(blocco).put(JSONObject().put("type", "text").put("text", richiesta)))))
+        if (modello.contains("haiku")) corpo.put("thinking", JSONObject().put("type", "disabled"))
+        val blocchi = postClaude(corpo).optJSONArray("content") ?: return ""
+        return (0 until blocchi.length()).mapNotNull { blocchi.optJSONObject(it) }
+            .filter { it.optString("type") == "text" }.joinToString(" ") { it.optString("text") }.trim()
+    }
+
+    /** Traduzione per il traduttore simultaneo: solo il testo tradotto, niente commenti. */
+    fun traduci(testo: String, da: String, a: String): String {
+        if (chiaveAttiva().isEmpty()) return "Manca la chiave API."
+        val r = chiamaSemplice(
+            "Traduci dal $da al $a questa frase detta a voce in una conversazione. Rendi il senso in modo naturale, " +
+                "come lo direbbe una persona madrelingua. Rispondi SOLO con la traduzione, senza virgolette né commenti.\n\n$testo",
+            500
+        )
+        Statistiche.richiesta(ctx, "ia", 0, listOf("traduttore"))
+        return r.trim().trim('"', '«', '»')
+    }
+
+    /** Resoconto della settimana: cosa è successo e cosa aspetta l'utente nei prossimi giorni. */
+    fun resocontoSettimana(): String {
+        if (chiaveAttiva().isEmpty()) return "Manca la chiave API."
+        val limite = SimpleDateFormat("yyyy-MM-dd", Locale.ITALIAN).format(Date(System.currentTimeMillis() - 7 * 24 * 3600_000L))
+        val diario = leggiDiario()
+        val righe = (0 until diario.length()).mapNotNull { diario.optJSONObject(it) }
+            .filter { it.optString("t") >= limite }
+            .takeLast(150)
+            .joinToString("\n") { "${it.optString("t")}: ${it.optString("d")} → ${it.optString("r").take(80)}" }
+        val impegni = try {
+            if (Build.VERSION.SDK_INT < 23 || ctx.checkSelfPermission(Manifest.permission.READ_CALENDAR) == PackageManager.PERMISSION_GRANTED)
+                integrazioni.leggiCalendario("domani", 7) else ""
+        } catch (e: Exception) { "" }
+        val promemoria = Promemoria.descrivi(ctx)
+        val richiesta = "Sei ${nomeAssistente()}, assistente vocale. ${personalita()}\n" +
+            "Scrivi il resoconto della settimana dell'utente, da leggere ad alta voce la domenica sera.\n" +
+            "Racconta in 6-8 frasi: i temi principali di cui si è occupato, le cose fatte, quelle rimaste in sospeso, " +
+            "e cosa lo aspetta nei prossimi giorni. Discorsivo, niente elenchi, niente simboli.\n\n" +
+            "RICHIESTE DELLA SETTIMANA:\n${righe.ifBlank { "nessuna" }}\n\nIMPEGNI DEI PROSSIMI 7 GIORNI:\n${impegni.ifBlank { "nessuno" }}\n\n" +
+            "PROMEMORIA ATTIVI:\n$promemoria"
+        return chiamaSemplice(richiesta, 900).ifBlank { "Questa settimana non ho abbastanza informazioni per un resoconto." }
     }
 
     /** Vista dal vivo: descrive un fotogramma della fotocamera (usata da VistaDalVivo). */
@@ -2376,11 +2653,15 @@ class Cervello private constructor(private val ctx: Context) {
 
     // ---------- memoria: ricordi, lezioni, dimenticare ----------
 
-    private fun ricorda(informazione: String): String =
-        if (aggiungiSenzaDoppioni("memoria", informazione, MAX_RICORDI)) "Memorizzato." else "Lo sapevo già."
+    private fun ricorda(informazione: String): String {
+        if (privata) return "Modalità privata: non salvo niente."
+        // i ricordi dei familiari si riconoscono dal nome tra parentesi quadre
+        val voce = if (chiParla.isNotEmpty()) "[$chiParla] $informazione" else informazione
+        return if (aggiungiSenzaDoppioni("memoria", voce, MAX_RICORDI)) "Memorizzato." else "Lo sapevo già."
+    }
 
     private fun imparaLezione(lezione: String): String =
-        if (aggiungiSenzaDoppioni("lezioni", lezione, MAX_LEZIONI)) "Lezione imparata." else "La conoscevo già."
+        if (privata) "Modalità privata: non salvo niente." else if (aggiungiSenzaDoppioni("lezioni", lezione, MAX_LEZIONI)) "Lezione imparata." else "La conoscevo già."
 
     private fun dimentica(parola: String): String {
         val p = parola.lowercase(Locale.ITALIAN).trim()

@@ -65,11 +65,13 @@ object Auto {
         when {
             eAuto(ctx, d) -> {
                 p.edit().putBoolean("in_auto", true).putString("dispositivo_auto", n).apply()
+                Automazioni.evento(ctx, "auto")
                 if (ServizioJarvis.attivo) ServizioJarvis.invia(ctx, ServizioJarvis.AZIONE_AUTO)
                 else notificaAuto(ctx)
             }
             eCuffie(d) -> {
                 p.edit().putBoolean("cuffie", true).apply()
+                Automazioni.evento(ctx, "cuffie")
                 ServizioJarvis.invia(ctx, ServizioJarvis.AZIONE_STATO)
             }
         }
@@ -80,6 +82,7 @@ object Auto {
         val n = nome(d)
         if (p.getBoolean("in_auto", false) && (n.isEmpty() || n == p.getString("dispositivo_auto", "") || eAuto(ctx, d))) {
             p.edit().putBoolean("in_auto", false).apply()
+            Automazioni.evento(ctx, "fine_auto")
             try { ctx.getSystemService(NotificationManager::class.java).cancel(ID_NOTIFICA) } catch (e: Exception) { }
         }
         if (eCuffie(d)) p.edit().putBoolean("cuffie", false).apply()

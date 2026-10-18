@@ -7,3 +7,4 @@ local.properties
 app/src/main/assets/model-en-us/
 app/src/main/assets/model-it/
 app/src/main/assets/model-spk/
+app/libs/*.aar

@@ -404,7 +404,10 @@ object Promemoria {
                 Intent.ACTION_BOOT_COMPLETED, Intent.ACTION_MY_PACKAGE_REPLACED -> {
                     riprogrammaTutto(ctx)
                     Proattivo.programma(ctx)
+                    Automazioni.programmaTutte(ctx)
                 }
+                Automazioni.AZIONE_ORA -> Automazioni.scattaOra(ctx, intent.getIntExtra("id", -1))
+                Automazioni.AZIONE_LUOGO -> Automazioni.scattaLuogo(ctx, intent)
                 Proattivo.AZIONE_CONTROLLO -> {
                     val attesa = goAsync()
                     Thread {

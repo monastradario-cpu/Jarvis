@@ -24,7 +24,7 @@ class PontePc(private val prefs: SharedPreferences) {
     }
 
     private fun ip() = (prefs.getString("pc_ip", "") ?: "").trim()
-    private fun token() = (prefs.getString("pc_token", "") ?: "").trim()
+    private fun token() = Cassaforte.leggi(prefs, "pc_token").trim()
     private fun mac() = (prefs.getString("pc_mac", "") ?: "").trim()
     fun configurato() = ip().isNotEmpty() && token().isNotEmpty()
 

@@ -17,7 +17,7 @@ android {
 
         // Solo i processori dei telefoni moderni: l'app pesa meno
         ndk {
-            abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+            abiFilters += listOf("arm64-v8a")
         }
     }
 
@@ -72,6 +72,10 @@ dependencies {
     implementation("androidx.camera:camera-camera2:1.4.1")
     implementation("androidx.camera:camera-lifecycle:1.4.1")
     implementation("androidx.camera:camera-view:1.4.1")
+
+    // Voce neurale offline (Piper tramite sherpa-onnx): l'AAR viene scaricato durante la costruzione
+    implementation(files("libs/sherpa-onnx.aar"))
+    implementation("org.apache.commons:commons-compress:1.26.2")
 
     // Email (IMAP e SMTP)
     implementation("com.sun.mail:android-mail:1.6.7")

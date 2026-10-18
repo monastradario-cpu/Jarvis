@@ -29,13 +29,22 @@ object ImprontaVocale {
     private const val CARTELLA_MODELLO = "model-it"
     private const val CARTELLA_VOCE = "model-spk"
 
-    /** Frasi di attivazione: le altre parole diventano [unk] e non attivano niente. */
-    const val GRAMMATICA =
-        "[\"ehi jarvis\", \"hey jarvis\", \"ei jarvis\", \"ciao jarvis\", \"ok jarvis\", \"okay jarvis\", \"jarvis\", \"[unk]\"]"
+    /** La parola con cui si chiama l'assistente (di serie "jarvis"), in minuscolo e senza spazi. */
+    fun parola(ctx: Context): String =
+        (prefs(ctx).getString("nome_assistente", "Jarvis") ?: "Jarvis").trim().lowercase(java.util.Locale.ITALIAN)
+            .replace(Regex("[^\\p{L}]"), "").ifEmpty { "jarvis" }
 
-    /** Parole per interrompere Jarvis mentre parla. */
-    const val GRAMMATICA_INTERRUZIONE =
-        "[\"basta\", \"stop\", \"zitto\", \"fermati\", \"silenzio\", \"jarvis\", \"ehi jarvis\", \"ciao jarvis\", \"[unk]\"]"
+    /** Frasi di attivazione: le altre parole diventano [unk] e non attivano niente. */
+    fun grammatica(ctx: Context): String {
+        val n = parola(ctx)
+        return org.json.JSONArray(listOf("ehi $n", "hey $n", "ei $n", "ciao $n", "ok $n", "okay $n", n, "[unk]")).toString()
+    }
+
+    /** Parole per interrompere l'assistente mentre parla. */
+    fun grammaticaInterruzione(ctx: Context): String {
+        val n = parola(ctx)
+        return org.json.JSONArray(listOf("basta", "stop", "zitto", "fermati", "silenzio", n, "ehi $n", "ciao $n", "[unk]")).toString()
+    }
 
     /** Saluti accettati davanti a "jarvis". */
     val SALUTI_EHI = setOf("ehi", "hey", "ei", "ok", "okay", "hi")
@@ -110,8 +119,8 @@ object ImprontaVocale {
     }
 
     /** Crea il riconoscitore per le frasi di attivazione, con l'impronta della voce se disponibile. */
-    fun nuovoRiconoscitore(m: Model): Recognizer {
-        val r = Recognizer(m, 16000f, GRAMMATICA)
+    fun nuovoRiconoscitore(ctx: Context, m: Model): Recognizer {
+        val r = Recognizer(m, 16000f, grammatica(ctx))
         r.setWords(true)
         modelloVoce?.let { r.setSpeakerModel(it) }
         return r
@@ -136,7 +145,61 @@ object ImprontaVocale {
     }
 
     fun registrata(ctx: Context): Boolean =
-        prefs(ctx).getString("impronta_voce", null) != null
+        prefs(ctx).getString("impronta_voce", null) != null || famiglia(ctx).isNotEmpty()
+
+    // ---------- voci della famiglia ----------
+
+    class Persona(val nome: String, val impronta: DoubleArray, val soglia: Double)
+
+    fun famiglia(ctx: Context): List<Persona> = try {
+        val a = JSONArray(prefs(ctx).getString("voci_famiglia", "[]") ?: "[]")
+        (0 until a.length()).mapNotNull { a.optJSONObject(it) }.map {
+            Persona(it.optString("nome"), vettore(it.optJSONArray("impronta") ?: JSONArray()), it.optDouble("soglia", 0.5))
+        }
+    } catch (e: Exception) {
+        emptyList()
+    }
+
+    fun rimuoviPersona(ctx: Context, nome: String) {
+        val a = JSONArray(prefs(ctx).getString("voci_famiglia", "[]") ?: "[]")
+        val nuova = JSONArray()
+        for (i in 0 until a.length()) a.optJSONObject(i)?.let { if (!it.optString("nome").equals(nome, true)) nuova.put(it) }
+        prefs(ctx).edit().putString("voci_famiglia", nuova.toString()).apply()
+    }
+
+    private fun salvaPersona(ctx: Context, nome: String, impronta: DoubleArray, soglia: Double) {
+        rimuoviPersona(ctx, nome)
+        val a = JSONArray(prefs(ctx).getString("voci_famiglia", "[]") ?: "[]")
+        a.put(JSONObject().put("nome", nome).put("impronta", JSONArray(impronta.toList())).put("soglia", soglia))
+        prefs(ctx).edit().putString("voci_famiglia", a.toString()).apply()
+    }
+
+    /**
+     * Chi sta parlando: "" per l'utente principale, il nome per un familiare, null se nessuno.
+     * Senza voci registrate restituisce sempre "".
+     */
+    fun chiParla(ctx: Context, risultato: JSONObject): String? {
+        if (!registrata(ctx)) return ""
+        val spk = risultato.optJSONArray("spk") ?: return null
+        if (risultato.optInt("spk_frames", 100) < 20) return null
+        val voce = vettore(spk)
+        val margine = when (prefs(ctx).getString("rigore_voce", "normale")) {
+            "rigido" -> 0.05
+            "permissivo" -> -0.08
+            else -> 0.0
+        }
+        var migliore: String? = null
+        var punteggio = -1.0
+        prefs(ctx).getString("impronta_voce", null)?.let { j ->
+            val s = somiglianza(voce, try { vettore(JSONArray(j)) } catch (e: Exception) { DoubleArray(0) })
+            if (s >= prefs(ctx).getFloat("soglia_voce", 0.5f) + margine && s > punteggio) { migliore = ""; punteggio = s }
+        }
+        for (p in famiglia(ctx)) {
+            val s = somiglianza(voce, p.impronta)
+            if (s >= p.soglia + margine && s > punteggio) { migliore = p.nome; punteggio = s }
+        }
+        return migliore
+    }
 
     fun attiva(ctx: Context): Boolean =
         registrata(ctx) && prefs(ctx).getBoolean("verifica_voce", true)
@@ -149,6 +212,7 @@ object ImprontaVocale {
      */
     fun eLaMiaVoce(ctx: Context, risultato: JSONObject): Boolean {
         if (!attiva(ctx)) return true
+        if (famiglia(ctx).isNotEmpty()) return chiParla(ctx, risultato) != null
         val spk = risultato.optJSONArray("spk") ?: return false
         if (risultato.optInt("spk_frames", 100) < 20) return false     // troppo breve per giudicare
         val impronta = try {
@@ -168,6 +232,10 @@ object ImprontaVocale {
     /** Come [eLaMiaVoce], ma null se la voce non è registrata (non si può verificare). */
     fun verificaSePossibile(ctx: Context, risultato: JSONObject): Boolean? {
         if (!registrata(ctx)) return null
+        if (famiglia(ctx).isNotEmpty() && risultato.optJSONArray("spk") != null && risultato.optInt("spk_frames", 100) >= 15) {
+            return chiParla(ctx, risultato) != null
+        }
+        if (prefs(ctx).getString("impronta_voce", null) == null) return null
         val spk = risultato.optJSONArray("spk") ?: return null
         if (risultato.optInt("spk_frames", 100) < 15) return null
         val impronta = try {
@@ -177,6 +245,44 @@ object ImprontaVocale {
         }
         val base = prefs(ctx).getFloat("soglia_voce", 0.5f).toDouble()
         return somiglianza(vettore(spk), impronta) >= base - 0.05
+    }
+
+    /** Prova il nome di attivazione: ascolta per 5 secondi e dice se lo ha riconosciuto. */
+    fun provaNome(ctx: Context, fine: (String) -> Unit) {
+        carica(ctx) { m ->
+            if (m == null) { fine("Il modello vocale non è pronto."); return@carica }
+            Thread {
+                val n = parola(ctx)
+                val r = Recognizer(m, 16000f, grammatica(ctx))
+                val minimo = AudioRecord.getMinBufferSize(16000, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
+                val reg = try {
+                    AudioRecord(MediaRecorder.AudioSource.VOICE_RECOGNITION, 16000, AudioFormat.CHANNEL_IN_MONO,
+                        AudioFormat.ENCODING_PCM_16BIT, maxOf(minimo, 6400) * 2)
+                } catch (e: SecurityException) { null }
+                if (reg == null || reg.state != AudioRecord.STATE_INITIALIZED) {
+                    reg?.release(); r.close()
+                    principale.post { fine("Non riesco a usare il microfono.") }
+                    return@Thread
+                }
+                reg.startRecording()
+                val blocco = ShortArray(1600)
+                val inizio = System.currentTimeMillis()
+                while (System.currentTimeMillis() - inizio < 5000) {
+                    val l = reg.read(blocco, 0, blocco.size)
+                    if (l > 0) r.acceptWaveForm(blocco, l)
+                }
+                try { reg.stop() } catch (e: Exception) { }
+                reg.release()
+                val sentito = try { JSONObject(r.finalResult).optString("text") } catch (e: Exception) { "" }
+                r.close()
+                val esito = when {
+                    sentito.split(" ").contains(n) -> "Perfetto: ho sentito \"$sentito\". Il nome funziona."
+                    sentito.isBlank() || sentito == "[unk]" -> "Non ho riconosciuto il nome. Può darsi che la parola \"$n\" non sia nel mio vocabolario: prova un altro nome, o ripeti più chiaramente."
+                    else -> "Ho sentito \"$sentito\" ma non il nome: riprova, oppure scegli un nome più comune."
+                }
+                principale.post { fine(esito) }
+            }.start()
+        }
     }
 
     fun cancella(ctx: Context) {
@@ -198,7 +304,7 @@ object ImprontaVocale {
      * @param avanzamento chiamato con il numero di frasi già registrate
      * @param fine chiamato con (riuscito, messaggio)
      */
-    fun registra(ctx: Context, quante: Int, avanzamento: (Int) -> Unit, fine: (Boolean, String) -> Unit) {
+    fun registra(ctx: Context, quante: Int, avanzamento: (Int) -> Unit, fine: (Boolean, String) -> Unit, persona: String = "") {
         if (registrando) return
         registrando = true
         carica(ctx) { m ->
@@ -210,7 +316,7 @@ object ImprontaVocale {
             }
             Thread {
                 val campioni = mutableListOf<DoubleArray>()
-                val riconoscitore = Recognizer(m, 16000f, GRAMMATICA).apply { setSpeakerModel(spkModel) }
+                val riconoscitore = Recognizer(m, 16000f, grammatica(ctx)).apply { setSpeakerModel(spkModel) }
                 val minimo = AudioRecord.getMinBufferSize(16000, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
                 val registratore = try {
                     AudioRecord(
@@ -275,6 +381,12 @@ object ImprontaVocale {
                 val tipica = somiglianze.average()
                 val minima = somiglianze.minOrNull() ?: tipica
                 val soglia = (minOf(tipica - 0.12, minima - 0.04)).coerceIn(0.3, 0.85)
+                if (persona.isNotBlank()) {
+                    salvaPersona(ctx, persona.trim(), media, soglia)
+                    prefs(ctx).edit().putBoolean("verifica_voce", true).apply()
+                    principale.post { fine(true, "Voce di ${persona.trim()} registrata: la riconoscerò quando mi chiama.") }
+                    return@Thread
+                }
                 prefs(ctx).edit()
                     .putString("impronta_voce", JSONArray(media.toList()).toString())
                     .putFloat("soglia_voce", soglia.toFloat())

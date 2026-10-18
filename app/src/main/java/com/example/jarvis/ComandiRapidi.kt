@@ -34,6 +34,28 @@ object ComandiRapidi {
             .replace(Regex(",? (per favore|grazie)$"), "")
             .trim()
         if (t.isEmpty()) return null
+        val ctx = c.contesto()
+
+        // ---------- modalità privata ----------
+        if (Regex("^((attiva|entra in|metti) (la )?modalità privata|modalità privata|non ricordare (questa conversazione|niente|nulla)( di quello che (dico|diciamo))?)$").matches(t)) {
+            return c.modalitaPrivata(true)
+        }
+        if (Regex("^((esci dalla|disattiva la|fine( della)?|chiudi la|termina la) modalità privata)$").matches(t)) {
+            return c.modalitaPrivata(false)
+        }
+
+        // ---------- liste ----------
+        val nomeLista = "(?:la |nella |alla |dalla )?lista(?: (?:della|delle|dei|degli|di|del|da))? ?(.*)"
+        Regex("^(?:aggiungi|metti|segna) (.+?) (?:alla|nella|in) $nomeLista$".replace("(?:la |nella |alla |dalla )?", "")).find(t)?.let { m ->
+            return Liste.aggiungi(ctx, m.groupValues[2].ifBlank { "spesa" }, m.groupValues[1].replace(Regex("^(il|lo|la|i|gli|le|l'|un|una|uno|del|della|dei|delle) "), ""))
+        }
+        Regex("^(?:togli|cancella|rimuovi|elimina) (.+?) dalla $nomeLista$".replace("(?:la |nella |alla |dalla )?", "")).find(t)?.let { m ->
+            return Liste.togli(ctx, m.groupValues[2].ifBlank { "spesa" }, m.groupValues[1].replace(Regex("^(il|lo|la|i|gli|le|l'|un|una|uno) "), ""))
+        }
+        Regex("^svuota $nomeLista$").find(t)?.let { m -> return Liste.togli(ctx, m.groupValues[1].ifBlank { "spesa" }, "tutto") }
+        Regex("^(?:cosa c'è|che cosa c'è|che c'è|cosa ho|leggimi|leggi|dimmi|mostrami) $nomeLista$").find(t)?.let { m ->
+            return Liste.leggi(ctx, m.groupValues[1].ifBlank { "spesa" })
+        }
 
         // ---------- torcia ----------
         Regex("^(accendi|attiva|spegni|disattiva|accendere|spegnere)( la| il)? (torcia|flash|luce del telefono)$").find(t)?.let {

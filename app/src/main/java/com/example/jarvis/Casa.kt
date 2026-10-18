@@ -18,7 +18,7 @@ class Casa(private val prefs: SharedPreferences) {
     private val IT = Locale.ITALIAN
 
     private fun indirizzo() = (prefs.getString("casa_url", "") ?: "").trim().trimEnd('/')
-    private fun token() = (prefs.getString("casa_token", "") ?: "").trim()
+    private fun token() = Cassaforte.leggi(prefs, "casa_token").trim()
     fun configurata() = indirizzo().isNotEmpty() && token().isNotEmpty()
 
     private val AVVISO = "La casa intelligente non è collegata. In SISTEMA, COLLEGAMENTI inserisci l'indirizzo e il token " +

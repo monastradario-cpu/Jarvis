@@ -185,7 +185,7 @@ class Integrazioni(
     }
 
     private fun ricercaGoogleGemini(domanda: String): String? {
-        val chiave = (prefs.getString("api_key", "") ?: "").trim()
+        val chiave = Cassaforte.leggi(prefs, "api_key").trim()
         if (chiave.isEmpty()) return null
         val modello = (prefs.getString("modello", Cervello.MODELLO_PREDEFINITO) ?: Cervello.MODELLO_PREDEFINITO).trim()
         return try {
