@@ -28,7 +28,9 @@ import android.text.InputType
 import android.text.SpannableString
 import android.text.Spanned
 import android.text.style.ForegroundColorSpan
+import android.text.style.RelativeSizeSpan
 import android.text.style.StyleSpan
+import android.text.style.TypefaceSpan
 import android.view.Gravity
 import android.view.KeyEvent
 import android.view.View
@@ -76,11 +78,21 @@ class MainActivity : Activity(), Cervello.Uscita {
     private val CODICE_CONTATTI = 2
     private val CODICE_MIC_SERVIZIO = 3
 
-    private val COLORE_SFONDO = Color.parseColor("#0B1220")
-    private val COLORE_ACCENTO = Color.parseColor("#3FC1FF")
-    private val COLORE_TESTO = Color.parseColor("#E6F1FF")
-    private val COLORE_TENUE = Color.parseColor("#7A8BA6")
-    private val COLORE_MEMORIA = Color.parseColor("#B794F6")
+    // Palette: nero, oro e bianco
+    private val COLORE_SFONDO = Color.parseColor("#050505")
+    private val COLORE_ORO = Color.parseColor("#D4A84B")
+    private val COLORE_BIANCO = Color.parseColor("#F5F5F5")
+    private val COLORE_TENUE = Color.parseColor("#8A8A8A")
+    private val MONO = Typeface.MONOSPACE
+    private val SERIF = Typeface.create("serif", Typeface.NORMAL)
+
+    private lateinit var infoHud: TextView
+    private val aggiornaHud = object : Runnable {
+        override fun run() {
+            scriviInfoHud()
+            reattore.postDelayed(this, 20_000)
+        }
+    }
 
     // ---------------- STATO ----------------
     private lateinit var cervello: Cervello
@@ -166,6 +178,7 @@ class MainActivity : Activity(), Cervello.Uscita {
         super.onResume()
         cervello.uscita = this
         visibile = true
+        reattore.post(aggiornaHud)
         // Mentre la schermata è aperta, la parola di attivazione va in pausa per liberare il microfono
         ServizioJarvis.invia(this, ServizioJarvis.AZIONE_PAUSA)
     }
@@ -173,6 +186,7 @@ class MainActivity : Activity(), Cervello.Uscita {
     override fun onPause() {
         cervello.uscita = null
         visibile = false
+        reattore.removeCallbacks(aggiornaHud)
         if (inAscolto) fermaAscolto()
         ServizioJarvis.invia(this, ServizioJarvis.AZIONE_RIPRENDI)
         super.onPause()
@@ -205,55 +219,64 @@ class MainActivity : Activity(), Cervello.Uscita {
 
     private fun dp(valore: Int) = (valore * resources.displayMetrics.density).toInt()
 
+    /** Testo in stile HUD: carattere a spaziatura fissa, maiuscolo e distanziato. */
+    private fun testoHud(testo: String, colore: Int, dimensione: Float, spaziatura: Float = 0.25f) =
+        TextView(this).apply {
+            text = testo
+            setTextColor(colore)
+            textSize = dimensione
+            typeface = MONO
+            letterSpacing = spaziatura
+        }
+
     @Suppress("DEPRECATION")
     private fun costruisciInterfaccia() {
         radice = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(COLORE_SFONDO)
-            setPadding(dp(16), dp(16), dp(16), dp(16))
+            setPadding(dp(18), dp(16), dp(18), dp(14))
         }
         // Evita che la barra di stato e la tastiera coprano l'app
         radice.setOnApplyWindowInsetsListener { vista, insets ->
             vista.setPadding(
-                dp(16),
-                dp(16) + insets.systemWindowInsetTop,
-                dp(16),
-                dp(16) + insets.systemWindowInsetBottom
+                dp(18),
+                dp(14) + insets.systemWindowInsetTop,
+                dp(18),
+                dp(14) + insets.systemWindowInsetBottom
             )
             insets
         }
 
-        // Barra superiore: titolo + memoria + impostazioni
+        // ---- Barra HUD: nome, memoria, sistema ----
         val barra = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
-        val titolo = TextView(this).apply {
-            text = "JARVIS"
-            setTextColor(COLORE_ACCENTO)
-            textSize = 24f
-            typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
-            letterSpacing = 0.15f
-        }
-        barra.addView(titolo, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-        val bottoneMemoria = Button(this).apply {
-            text = "🧠"
-            textSize = 20f
-            setBackgroundColor(Color.TRANSPARENT)
+        barra.addView(
+            testoHud("JARVIS", COLORE_ORO, 16f, 0.45f),
+            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        )
+        barra.addView(testoHud("MEMORIA", COLORE_ORO, 11f, 0.2f).apply {
+            setPadding(dp(10), dp(8), dp(10), dp(8))
             setOnClickListener { mostraMemoria() }
-        }
-        barra.addView(bottoneMemoria)
-        val bottoneImpostazioni = Button(this).apply {
-            text = "⚙"
-            textSize = 22f
-            setTextColor(COLORE_TENUE)
-            setBackgroundColor(Color.TRANSPARENT)
+        })
+        barra.addView(testoHud("SISTEMA", COLORE_ORO, 11f, 0.2f).apply {
+            setPadding(dp(10), dp(8), 0, dp(8))
             setOnClickListener { mostraImpostazioni() }
-        }
-        barra.addView(bottoneImpostazioni)
+        })
         radice.addView(barra)
 
-        // Il reattore animato: toccalo per parlare
+        // Linea dorata sottile
+        radice.addView(View(this).apply { setBackgroundColor(COLORE_ORO); alpha = 0.45f },
+            LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(1)).apply { topMargin = dp(2) })
+
+        // Riga di dati: data, ora, batteria, plugin
+        infoHud = testoHud("", COLORE_TENUE, 9.5f, 0.12f)
+        radice.addView(infoHud, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+        ).apply { topMargin = dp(6) })
+
+        // ---- Il reattore: sfera dorata con anelli HUD. Toccalo per parlare ----
         reattore = ReattoreView(this).apply {
             isClickable = true
             contentDescription = "Tocca per parlare"
@@ -261,42 +284,57 @@ class MainActivity : Activity(), Cervello.Uscita {
         }
         radice.addView(
             reattore,
-            LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1.25f).apply { topMargin = dp(4) }
+            LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1.3f).apply { topMargin = dp(4) }
         )
 
-        // Conversazione
-        registro = TextView(this).apply {
-            setTextColor(COLORE_TESTO)
-            textSize = 15f
-            setLineSpacing(0f, 1.2f)
-            setTextIsSelectable(true)
-        }
-        scorrimento = ScrollView(this).apply { addView(registro) }
-
-        // Stato ("Ti ascolto...", "Sto pensando...")
+        // Testo che stai dicendo, in tempo reale
         stato = TextView(this).apply {
-            setTextColor(COLORE_TENUE)
+            setTextColor(COLORE_BIANCO)
+            alpha = 0.75f
             textSize = 14f
+            typeface = SERIF
             gravity = Gravity.CENTER
         }
-        radice.addView(
-            stato,
-            LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-                .apply { topMargin = dp(8) }
-        )
+        radice.addView(stato, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+        ))
 
+        // ---- Conversazione ----
+        registro = TextView(this).apply {
+            setTextColor(COLORE_BIANCO)
+            textSize = 15f
+            setLineSpacing(dp(2).toFloat(), 1.15f)
+            setTextIsSelectable(true)
+        }
+        scorrimento = ScrollView(this).apply {
+            addView(registro)
+            isVerticalScrollBarEnabled = false
+            isVerticalFadingEdgeEnabled = true
+            setFadingEdgeLength(dp(28))
+        }
         radice.addView(
             scorrimento,
             LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f).apply { topMargin = dp(8) }
         )
         aggiornaMic()
 
-        // Riga per scrivere invece di parlare
-        val rigaTesto = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        // ---- Campo per scrivere: una pillola con bordo dorato ----
+        val rigaTesto = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(16), 0, dp(6), 0)
+            background = GradientDrawable().apply {
+                cornerRadius = dp(24).toFloat()
+                setStroke(dp(1), Color.argb(170, 212, 168, 75))
+                setColor(Color.parseColor("#0D0D0D"))
+            }
+        }
         campoTesto = EditText(this).apply {
-            hint = "Oppure scrivi qui..."
+            hint = "Scrivi o tocca la sfera"
             setHintTextColor(COLORE_TENUE)
-            setTextColor(COLORE_TESTO)
+            setTextColor(COLORE_BIANCO)
+            textSize = 15f
+            background = null
             setSingleLine(true)
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
             imeOptions = EditorInfo.IME_ACTION_SEND
@@ -306,15 +344,37 @@ class MainActivity : Activity(), Cervello.Uscita {
                 } else false
             }
         }
-        rigaTesto.addView(campoTesto, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-        val bottoneInvia = Button(this).apply {
-            text = "Invia"
+        rigaTesto.addView(campoTesto, LinearLayout.LayoutParams(0, dp(46), 1f))
+        rigaTesto.addView(testoHud("INVIA", COLORE_ORO, 12f, 0.2f).apply {
+            setPadding(dp(12), dp(12), dp(12), dp(12))
             setOnClickListener { inviaTestoScritto() }
-        }
-        rigaTesto.addView(bottoneInvia)
-        radice.addView(rigaTesto)
+        })
+        radice.addView(rigaTesto, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+        ).apply { topMargin = dp(10) })
 
         setContentView(radice)
+        scriviInfoHud()
+    }
+
+    /** Riga di dati in alto: data, ora, batteria, plugin attivi e ricordi. */
+    private fun scriviInfoHud() {
+        val data = SimpleDateFormat("EEE d MMM · HH:mm", Locale.ITALIAN).format(Date()).uppercase(Locale.ITALIAN)
+        val batteria = try {
+            (getSystemService(Context.BATTERY_SERVICE) as android.os.BatteryManager)
+                .getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY)
+        } catch (e: Exception) {
+            -1
+        }
+        val plugin = cervello.PLUGIN.count { cervello.pluginAttivo(it.id) && (it.id != "ricerca" || cervello.usaClaude()) }
+        val ricordi = cervello.leggiLista("memoria").size
+        val sempre = if (ServizioJarvis.attivo) " · SEMPRE ATTIVO" else ""
+        infoHud.text = buildString {
+            append(data)
+            if (batteria >= 0) append(" · BATT $batteria%")
+            append(" · $plugin PLUGIN · $ricordi RICORDI")
+            append(sempre)
+        }
     }
 
     /** Aggiorna il reattore in base a cosa sta facendo Jarvis. */
@@ -330,28 +390,41 @@ class MainActivity : Activity(), Cervello.Uscita {
             }
             parlando -> {
                 reattore.stato = ReattoreView.Stato.PARLA
-                reattore.testoCentrale = "JARVIS"
+                reattore.testoCentrale = "RISPONDO"
             }
             else -> {
                 reattore.stato = ReattoreView.Stato.RIPOSO
-                reattore.testoCentrale = "TOCCA"
+                reattore.testoCentrale = "TOCCA PER PARLARE"
                 reattore.livelloVoce = 0f
             }
         }
     }
 
+    /**
+     * Conversazione: le tue frasi in caratteri tecnici bianchi, le risposte di Jarvis
+     * in carattere elegante, le note di memoria e le fonti in oro.
+     */
     private fun aggiungiAlRegistro(chi: String, testo: String) {
-        val intestazione = "$chi: "
-        val riga = SpannableString("$intestazione$testo\n\n")
-        val colore = when (chi) {
-            "Tu", "Fonti" -> COLORE_TENUE
-            "Memoria" -> COLORE_MEMORIA
-            else -> COLORE_ACCENTO
-        }
-        riga.setSpan(ForegroundColorSpan(colore), 0, intestazione.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-        riga.setSpan(StyleSpan(Typeface.BOLD), 0, intestazione.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-        if (chi == "Fonti" || chi == "Memoria") {
-            riga.setSpan(ForegroundColorSpan(colore), 0, riga.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        val riga: SpannableString
+        when (chi) {
+            "Tu" -> {
+                riga = SpannableString("› $testo\n")
+                riga.setSpan(TypefaceSpan("monospace"), 0, riga.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                riga.setSpan(ForegroundColorSpan(COLORE_TENUE), 0, riga.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                riga.setSpan(RelativeSizeSpan(0.9f), 0, riga.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            }
+            "Memoria", "Fonti" -> {
+                val simbolo = if (chi == "Memoria") "◆ " else "◇ Fonti: "
+                riga = SpannableString("$simbolo$testo\n\n")
+                riga.setSpan(TypefaceSpan("monospace"), 0, riga.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                riga.setSpan(ForegroundColorSpan(COLORE_ORO), 0, riga.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                riga.setSpan(RelativeSizeSpan(0.8f), 0, riga.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            }
+            else -> {
+                riga = SpannableString("$testo\n\n")
+                riga.setSpan(TypefaceSpan("serif"), 0, riga.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                riga.setSpan(ForegroundColorSpan(COLORE_BIANCO), 0, riga.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            }
         }
         registro.append(riga)
         scorrimento.post { scorrimento.fullScroll(View.FOCUS_DOWN) }

@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Tema di Jarvis: nero, oro e bianco anche nelle finestre di sistema -->
+    <style name="TemaJarvis" parent="android:Theme.Material.NoActionBar">
+        <item name="android:colorPrimary">@color/nero</item>
+        <item name="android:colorPrimaryDark">@color/nero</item>
+        <item name="android:colorAccent">@color/oro</item>
+        <item name="android:windowBackground">@color/nero</item>
+        <item name="android:statusBarColor">@color/nero</item>
+        <item name="android:navigationBarColor">@color/nero</item>
+        <item name="android:textColorPrimary">@color/bianco</item>
+        <item name="android:alertDialogTheme">@style/DialogoJarvis</item>
+    </style>
+
+    <style name="DialogoJarvis" parent="android:Theme.Material.Dialog.Alert">
+        <item name="android:colorAccent">@color/oro</item>
+        <item name="android:colorBackground">@color/grafite</item>
+        <item name="android:textColorPrimary">@color/bianco</item>
+    </style>
+</resources>

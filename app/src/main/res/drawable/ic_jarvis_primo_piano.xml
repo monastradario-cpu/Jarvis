@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Icona di Jarvis: sfera dorata con anelli HUD, in nero, oro e bianco -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path android:strokeColor="#D4A84B" android:strokeWidth="1" android:strokeAlpha="0.75"
+        android:pathData="M85.00,54.00L83.00,54.00M84.53,59.38L82.56,59.04M83.13,64.60L81.25,63.92M80.85,69.50L79.11,68.50M77.75,73.93L76.22,72.64M73.93,77.75L72.64,76.22M69.50,80.85L68.50,79.11M64.60,83.13L63.92,81.25M59.38,84.53L59.04,82.56M54.00,85.00L54.00,83.00M48.62,84.53L48.96,82.56M43.40,83.13L44.08,81.25M38.50,80.85L39.50,79.11M34.07,77.75L35.36,76.22M30.25,73.93L31.78,72.64M27.15,69.50L28.89,68.50M24.87,64.60L26.75,63.92M23.47,59.38L25.44,59.04M23.00,54.00L25.00,54.00M23.47,48.62L25.44,48.96M24.87,43.40L26.75,44.08M27.15,38.50L28.89,39.50M30.25,34.07L31.78,35.36M34.07,30.25L35.36,31.78M38.50,27.15L39.50,28.89M43.40,24.87L44.08,26.75M48.62,23.47L48.96,25.44M54.00,23.00L54.00,25.00M59.38,23.47L59.04,25.44M64.60,24.87L63.92,26.75M69.50,27.15L68.50,28.89M73.93,30.25L72.64,31.78M77.75,34.07L76.22,35.36M80.85,38.50L79.11,39.50M83.13,43.40L81.25,44.08M84.53,48.62L82.56,48.96" />
+    <path android:strokeColor="#D4A84B" android:strokeWidth="1.8" android:strokeAlpha="1"
+        android:pathData="M86.00,54.00L81.50,54.00M54.00,86.00L54.00,81.50M22.00,54.00L26.50,54.00M54.00,22.00L54.00,26.50" />
+    <path android:strokeColor="#D4A84B" android:strokeWidth="1.8" android:strokeLineCap="round"
+        android:pathData="M54.00,30.00A24,24 0,0 1 78.00,54.00" />
+    <path android:strokeColor="#F5F5F5" android:strokeWidth="2.2" android:strokeLineCap="round"
+        android:pathData="M45.79,76.55A24,24 0,0 1 33.22,66.00" />
+    <path android:fillColor="#D4A84B" android:fillAlpha="0.18" android:pathData="M37,54A17,17 0,1 1 71,54A17,17 0,1 1 37,54Z" />
+    <path android:fillColor="#D4A84B" android:fillAlpha="0.45" android:pathData="M41,54A13,13 0,1 1 67,54A13,13 0,1 1 41,54Z" />
+    <path android:fillColor="#E8C46E" android:pathData="M44,54A10,10 0,1 1 64,54A10,10 0,1 1 44,54Z" />
+    <path android:fillColor="#F7E6B5" android:pathData="M47.5,54A6.5,6.5 0,1 1 60.5,54A6.5,6.5 0,1 1 47.5,54Z" />
+    <path android:fillColor="#FFFFFF" android:pathData="M50.5,54A3.5,3.5 0,1 1 57.5,54A3.5,3.5 0,1 1 50.5,54Z" />
+</vector>
