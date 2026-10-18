@@ -25,11 +25,21 @@ import kotlin.math.sqrt
  */
 object ImprontaVocale {
 
-    private const val CARTELLA_MODELLO = "model-en-us"
+    // Modello italiano: riconosce "ehi jarvis" e "ciao jarvis" pronunciati all'italiana
+    private const val CARTELLA_MODELLO = "model-it"
     private const val CARTELLA_VOCE = "model-spk"
 
+    /** Frasi di attivazione: le altre parole diventano [unk] e non attivano niente. */
     const val GRAMMATICA =
-        "[\"hey jarvis\", \"hi jarvis\", \"okay jarvis\", \"ciao jarvis\", \"chow jarvis\", \"jarvis\", \"[unk]\"]"
+        "[\"ehi jarvis\", \"hey jarvis\", \"ei jarvis\", \"ciao jarvis\", \"ok jarvis\", \"okay jarvis\", \"jarvis\", \"[unk]\"]"
+
+    /** Parole per interrompere Jarvis mentre parla. */
+    const val GRAMMATICA_INTERRUZIONE =
+        "[\"basta\", \"stop\", \"zitto\", \"fermati\", \"silenzio\", \"jarvis\", \"ehi jarvis\", \"ciao jarvis\", \"[unk]\"]"
+
+    /** Saluti accettati davanti a "jarvis". */
+    val SALUTI_EHI = setOf("ehi", "hey", "ei", "ok", "okay", "hi")
+    val SALUTI_CIAO = setOf("ciao")
 
     @Volatile var modello: Model? = null
         private set
@@ -137,6 +147,20 @@ object ImprontaVocale {
             else -> 0.0
         }
         return somiglianza(vettore(spk), impronta) >= base + margine
+    }
+
+    /** Come [eLaMiaVoce], ma null se la voce non è registrata (non si può verificare). */
+    fun verificaSePossibile(ctx: Context, risultato: JSONObject): Boolean? {
+        if (!registrata(ctx)) return null
+        val spk = risultato.optJSONArray("spk") ?: return null
+        if (risultato.optInt("spk_frames", 100) < 15) return null
+        val impronta = try {
+            vettore(JSONArray(prefs(ctx).getString("impronta_voce", "[]")))
+        } catch (e: Exception) {
+            return null
+        }
+        val base = prefs(ctx).getFloat("soglia_voce", 0.5f).toDouble()
+        return somiglianza(vettore(spk), impronta) >= base - 0.05
     }
 
     fun cancella(ctx: Context) {

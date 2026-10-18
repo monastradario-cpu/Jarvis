@@ -51,6 +51,7 @@ object Promemoria {
 
     private fun salva(ctx: Context, lista: JSONArray) {
         prefs(ctx).edit().putString("promemoria", lista.toString()).apply()
+        try { WidgetJarvis.aggiorna(ctx) } catch (e: Exception) { }
     }
 
     private fun nuovoId(ctx: Context): Int {
@@ -400,7 +401,16 @@ object Promemoria {
                 AZIONE_PROMEMORIA -> scatta(ctx, intent.getIntExtra("id", -1))
                 AZIONE_RIEPILOGO -> riepilogoScattato(ctx)
                 AZIONE_LUOGO -> luogoRaggiunto(ctx, intent)
-                Intent.ACTION_BOOT_COMPLETED, Intent.ACTION_MY_PACKAGE_REPLACED -> riprogrammaTutto(ctx)
+                Intent.ACTION_BOOT_COMPLETED, Intent.ACTION_MY_PACKAGE_REPLACED -> {
+                    riprogrammaTutto(ctx)
+                    Proattivo.programma(ctx)
+                }
+                Proattivo.AZIONE_CONTROLLO -> {
+                    val attesa = goAsync()
+                    Thread {
+                        try { Proattivo.controlla(ctx) } finally { attesa.finish() }
+                    }.start()
+                }
             }
         }
     }

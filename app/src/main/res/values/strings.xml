@@ -1,4 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="descrizione_accessibilita">Permette a Jarvis di leggere lo schermo e usare le altre app quando glielo chiedi a voce: toccare pulsanti, scrivere nei campi, scorrere e mandare messaggi WhatsApp. Jarvis agisce solo su tua richiesta.</string>
+    <string name="descrizione_widget">Jarvis sulla schermata home: tocca la sfera per parlare e vedi il prossimo impegno.</string>
+    <string name="invia_al_pc">Jarvis: invia al PC</string>
 </resources>

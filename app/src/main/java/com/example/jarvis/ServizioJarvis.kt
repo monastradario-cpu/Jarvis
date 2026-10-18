@@ -21,7 +21,6 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.speech.RecognitionListener
-import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
@@ -45,10 +44,11 @@ class ServizioJarvis : Service() {
         const val AZIONE_FERMA = "com.example.jarvis.FERMA"
         const val AZIONE_RIEPILOGO = "com.example.jarvis.RIEPILOGO"
         const val AZIONE_DI = "com.example.jarvis.DI"
+        const val AZIONE_AUTO = "com.example.jarvis.AUTO"
+        const val AZIONE_STATO = "com.example.jarvis.STATO"
 
         private const val CANALE = "jarvis_sempre_attivo"
         private const val ID_NOTIFICA = 7
-        private const val CARTELLA_MODELLO = "model-en-us"
 
         fun avvia(ctx: Context) {
             val intento = Intent(ctx, ServizioJarvis::class.java)
@@ -59,11 +59,14 @@ class ServizioJarvis : Service() {
             }
         }
 
-        /** Fa dire una frase a Jarvis (per esempio un promemoria). */
-        fun dici(ctx: Context, testo: String) {
+        /** Fa dire una frase a Jarvis (per esempio un promemoria o un avviso proattivo). */
+        fun dici(ctx: Context, testo: String, proattivo: Boolean = false) {
             if (!attivo) return
             try {
-                ctx.startService(Intent(ctx, ServizioJarvis::class.java).setAction(AZIONE_DI).putExtra("testo", testo))
+                ctx.startService(
+                    Intent(ctx, ServizioJarvis::class.java).setAction(AZIONE_DI)
+                        .putExtra("testo", testo).putExtra("proattivo", proattivo)
+                )
             } catch (e: Exception) {
                 // il servizio non è raggiungibile
             }
@@ -87,10 +90,10 @@ class ServizioJarvis : Service() {
     private var filoAscolto: Thread? = null
     private var riconoscitore: SpeechRecognizer? = null
     private var tts: TextToSpeech? = null
+    private lateinit var parlatore: Parlatore
 
     private var inPausa = false            // la schermata di Jarvis è aperta
     private var occupato = false           // sta ascoltando un comando, pensando o parlando
-    private var continuaDopo = false       // dopo aver parlato, ascolta di nuovo (ha fatto una domanda)
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -98,10 +101,18 @@ class ServizioJarvis : Service() {
         super.onCreate()
         cervello = Cervello.prendi(this)
         creaCanale()
+        parlatore = Parlatore(this, cervello.prefs,
+            alTermine = { domanda ->
+                // Se Jarvis ha fatto una domanda, ascolta subito la risposta senza dover dire "Jarvis"
+                if (domanda && cervello.prefs.getBoolean("dialogo_continuo", true)) avviaComando() else riprendiAttesa()
+            },
+            alInterrotto = { vuoleParlare -> if (vuoleParlare) avviaComando() else riprendiAttesa() }
+        )
         tts = TextToSpeech(this) { esito ->
             if (esito == TextToSpeech.SUCCESS) {
                 tts?.let { Voce.applica(it, cervello.prefs) }
                 tts?.setOnUtteranceProgressListener(ascoltatoreVoce)
+                parlatore.tts = tts
             }
         }
     }
@@ -145,13 +156,23 @@ class ServizioJarvis : Service() {
             }
             AZIONE_DI -> {
                 val testo = intent.getStringExtra("testo").orEmpty()
-                if (testo.isNotBlank() && !occupato) {
+                // gli avvisi proattivi si dicono a voce solo se l'utente può sentirli
+                val proattivo = intent.getBooleanExtra("proattivo", false)
+                val puoSentire = schermoAcceso || cuffie() || inAuto()
+                if (testo.isNotBlank() && !occupato && (!proattivo || puoSentire)) {
                     occupato = true
                     fermaParola()
-                    continuaDopo = false
                     parla(testo)
                 }
             }
+            AZIONE_AUTO -> {
+                if (!occupato) {
+                    occupato = true
+                    fermaParola()
+                    parla("Buon viaggio. Sono in ascolto: mi chiami quando vuole.")
+                }
+            }
+            AZIONE_STATO -> if (!occupato) riprendiAttesa()
             AZIONE_FERMA -> {
                 cervello.prefs.edit().putBoolean("sempre_attivo", false).apply()
                 stopSelf()
@@ -164,7 +185,9 @@ class ServizioJarvis : Service() {
         attivo = false
         principale.removeCallbacksAndMessages(null)
         fermaParola()
+        Interruttore.ferma()
         try { unregisterReceiver(ricevitoreStato) } catch (e: Exception) { }
+        try { unregisterReceiver(ricevitoreCuffie) } catch (e: Exception) { }
         try { riconoscitore?.destroy() } catch (e: Exception) { }
         try { tts?.shutdown() } catch (e: Exception) { }
         try { modello?.close() } catch (e: Exception) { }
@@ -217,8 +240,11 @@ class ServizioJarvis : Service() {
                 Intent.ACTION_BATTERY_CHANGED -> {
                     val livello = i.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
                     val scala = i.getIntExtra(BatteryManager.EXTRA_SCALE, 100)
+                    val prima = livelloBatteria
                     if (livello >= 0 && scala > 0) livelloBatteria = livello * 100 / scala
                     inCarica = i.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0) != 0
+                    // statistiche: batteria persa mentre Jarvis ascoltava
+                    if (ascoltando && !inCarica && livelloBatteria < prima) batteriaPersa += prima - livelloBatteria
                 }
             }
             if (!occupato) {
@@ -230,7 +256,41 @@ class ServizioJarvis : Service() {
         }
     }
 
+    private var batteriaPersa = 0
+
+    private fun cuffie() = cervello.prefs.getBoolean("cuffie", false)
+    private fun inAuto() = cervello.prefs.getBoolean("in_auto", false)
+
+    /** Cuffie con il filo e Bluetooth (anche le cuffie Bluetooth vengono segnalate da Auto). */
+    private val ricevitoreCuffie = object : BroadcastReceiver() {
+        override fun onReceive(c: Context, i: Intent) {
+            when (i.action) {
+                android.media.AudioManager.ACTION_HEADSET_PLUG -> {
+                    cervello.prefs.edit().putBoolean("cuffie", i.getIntExtra("state", 0) == 1).apply()
+                }
+                android.bluetooth.BluetoothDevice.ACTION_ACL_CONNECTED,
+                android.bluetooth.BluetoothDevice.ACTION_ACL_DISCONNECTED -> {
+                    val d: android.bluetooth.BluetoothDevice? = if (Build.VERSION.SDK_INT >= 33) {
+                        i.getParcelableExtra(android.bluetooth.BluetoothDevice.EXTRA_DEVICE, android.bluetooth.BluetoothDevice::class.java)
+                    } else {
+                        @Suppress("DEPRECATION")
+                        i.getParcelableExtra<android.bluetooth.BluetoothDevice>(android.bluetooth.BluetoothDevice.EXTRA_DEVICE)
+                    }
+                    if (d != null) {
+                        if (i.action == android.bluetooth.BluetoothDevice.ACTION_ACL_CONNECTED) Auto.collegato(c, d) else Auto.scollegato(c, d)
+                    }
+                }
+            }
+            if (!occupato) riprendiAttesa()
+        }
+    }
+
     private fun registraStatoTelefono() {
+        try {
+            val filtroCuffie = IntentFilter(android.media.AudioManager.ACTION_HEADSET_PLUG)
+            if (Build.VERSION.SDK_INT >= 33) registerReceiver(ricevitoreCuffie, filtroCuffie, Context.RECEIVER_EXPORTED)
+            else registerReceiver(ricevitoreCuffie, filtroCuffie)
+        } catch (e: Exception) { }
         val filtro = IntentFilter().apply {
             addAction(Intent.ACTION_SCREEN_ON)
             addAction(Intent.ACTION_SCREEN_OFF)
@@ -250,7 +310,7 @@ class ServizioJarvis : Service() {
      * - equilibrato: ascolta sempre, ma si ferma sotto il 20% di batteria (se non è in carica)
      * - prestazioni: ascolta sempre
      */
-    private fun deveAscoltare(): Boolean = when (cervello.prefs.getString("risparmio", "equilibrato")) {
+    private fun deveAscoltare(): Boolean = inAuto() || cuffie() || when (cervello.prefs.getString("risparmio", "equilibrato")) {
         "massimo" -> schermoAcceso || inCarica
         "prestazioni" -> true
         else -> inCarica || livelloBatteria > 20
@@ -323,8 +383,21 @@ class ServizioJarvis : Service() {
             var rumoreDiFondo = 300.0
             var ultimoParlato = 0L
             var inAnalisi = false
+            var blocchiAscolto = 0L
+            var blocchiAnalisi = 0L
+            var ultimoSalvataggio = System.currentTimeMillis()
 
             while (ascoltando) {
+                // statistiche: ogni 5 minuti salva il tempo di ascolto
+                if (System.currentTimeMillis() - ultimoSalvataggio > 300_000L) {
+                    Statistiche.ascolto(this, blocchiAscolto / 10, blocchiAnalisi / 10, batteriaPersa)
+                    batteriaPersa = 0
+                    blocchiAscolto = 0
+                    blocchiAnalisi = 0
+                    ultimoSalvataggio = System.currentTimeMillis()
+                }
+                blocchiAscolto++
+                if (inAnalisi) blocchiAnalisi++
                 val letti = registratore.read(blocco, 0, blocco.size)
                 if (letti <= 0) continue
                 var somma = 0.0
@@ -355,6 +428,8 @@ class ServizioJarvis : Service() {
             try { registratore.stop() } catch (e: Exception) { }
             registratore.release()
             riconoscitoreParola.close()
+            Statistiche.ascolto(this, blocchiAscolto / 10, blocchiAnalisi / 10, batteriaPersa)
+            batteriaPersa = 0
         }.apply {
             name = "jarvis-ascolto"
             start()
@@ -383,8 +458,8 @@ class ServizioJarvis : Service() {
         val posizione = parole.indexOf("jarvis")
         if (posizione < 0) return
         val saluto = parole.getOrNull(posizione - 1)
-        val salutiEhi = setOf("hey", "hi", "okay")
-        val salutiCiao = setOf("ciao", "chow")
+        val salutiEhi = ImprontaVocale.SALUTI_EHI
+        val salutiCiao = ImprontaVocale.SALUTI_CIAO
         val salutoGiusto = when (frase()) {
             "ehi" -> saluto in salutiEhi
             "ciao" -> saluto in salutiCiao
@@ -418,6 +493,7 @@ class ServizioJarvis : Service() {
             }
             return
         }
+        Statistiche.attivazione(this)
         principale.post { if (!occupato) avviaComando() }
     }
 
@@ -429,20 +505,17 @@ class ServizioJarvis : Service() {
         if (!attivo) return
         occupato = true
         fermaParola()
-        tts?.stop()
-        if (!SpeechRecognizer.isRecognitionAvailable(this)) {
+        parlatore.ferma()
+        if (!Orecchie.disponibile(this)) {
             riprendiAttesa()
             return
         }
         if (riconoscitore == null) {
-            riconoscitore = SpeechRecognizer.createSpeechRecognizer(this).apply {
+            riconoscitore = Orecchie.crea(this).apply {
                 setRecognitionListener(ascoltatoreComando)
             }
         }
-        val intento = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE, "it-IT")
-        }
+        val intento = Orecchie.richiesta(this, false)
         aggiornaNotifica("Ti ascolto...")
         // un attimo di pausa per liberare il microfono dalla parola di attivazione
         principale.postDelayed({
@@ -475,15 +548,18 @@ class ServizioJarvis : Service() {
 
     private fun pensa(testo: String) {
         aggiornaNotifica("Sto pensando: $testo")
+        // "basta", "niente", "lascia stare": nessuna risposta, torna in attesa
+        if (Regex("^(basta|niente|lascia stare|annulla|stop|nulla|no grazie)[.!]?$").matches(testo.trim().lowercase())) {
+            riprendiAttesa()
+            return
+        }
+        parlatore.inizia()
         Thread {
-            val risposta = if (cervello.chiaveAttiva().isEmpty()) {
-                Cervello.Risposta("Manca la chiave API: apri Jarvis e inseriscila nelle impostazioni.", emptyList())
-            } else {
-                cervello.rispondi(testo)
-            }
+            val risposta = cervello.rispondi(testo) { pezzo -> parlatore.aggiungi(pezzo) }
             principale.post {
                 cervello.uscita?.nuovoScambio(testo, risposta.testo, risposta.fonti)
-                parla(risposta.testo)
+                aggiornaNotifica(Parlatore.pulisci(risposta.testo).take(120))
+                parlatore.fine(risposta.testo)
             }
             cervello.manutenzione()
         }.start()
@@ -495,27 +571,28 @@ class ServizioJarvis : Service() {
 
     private fun parla(testo: String) {
         if (!attivo) return
-        val pulito = testo.replace(Regex("[*#_`]"), "")
-        continuaDopo = pulito.trim().endsWith("?") && cervello.prefs.getBoolean("dialogo_continuo", true)
-        aggiornaNotifica(pulito.take(120))
-        val voce = tts
-        voce?.let { Voce.applica(it, cervello.prefs) }
-        if (voce == null || voce.speak(pulito, TextToSpeech.QUEUE_FLUSH, null, "servizio") != TextToSpeech.SUCCESS) {
+        aggiornaNotifica(Parlatore.pulisci(testo).take(120))
+        if (tts == null) {
             riprendiAttesa()
+            return
         }
+        parlatore.di(testo)
     }
 
     private val ascoltatoreVoce = object : UtteranceProgressListener() {
         override fun onStart(utteranceId: String?) {}
 
         override fun onDone(utteranceId: String?) {
-            // Se Jarvis ha fatto una domanda, ascolta subito la risposta senza dover dire "Jarvis"
-            principale.post { if (continuaDopo) avviaComando() else riprendiAttesa() }
+            parlatore.pezzoFinito(utteranceId)
         }
 
         @Deprecated("Richiesto dalle versioni vecchie di Android")
         override fun onError(utteranceId: String?) {
-            principale.post { riprendiAttesa() }
+            parlatore.pezzoFinito(utteranceId)
+        }
+
+        override fun onStop(utteranceId: String?, interrupted: Boolean) {
+            parlatore.pezzoFinito(utteranceId)
         }
     }
 

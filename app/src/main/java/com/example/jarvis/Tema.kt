@@ -41,18 +41,48 @@ object Tema {
     val INTERFACCE = listOf(
         "hud" to "HUD: anelli tecnici, riga di dati in alto",
         "minimal" to "Minimal: solo la sfera, niente dati",
-        "completa" to "HUD completo: più anelli e particelle sempre visibili"
+        "completa" to "HUD completo: più anelli e particelle sempre visibili",
+        "radar" to "Radar: griglia e raggio che scansiona",
+        "olografico" to "Olografico: linee di scansione e luce tremolante"
     )
 
     /** Forme del cuore animato. */
     val FORME = listOf(
         "sfera" to "Sfera luminosa",
         "anelli" to "Nucleo ad anelli",
-        "onda" to "Onda vocale: barre che danzano con la voce"
+        "onda" to "Onda vocale: barre che danzano con la voce",
+        "atomo" to "Atomo: elettroni in orbita",
+        "cristallo" to "Cristallo: stella che ruota",
+        "galassia" to "Galassia: spirale di particelle",
+        "esagono" to "Esagono: nucleo tecnologico"
     )
 
-    fun attuale(prefs: SharedPreferences): Palette =
-        PALETTE.firstOrNull { it.id == prefs.getString("tema", "oro") } ?: PALETTE[0]
+    /** Sfondi dietro al cuore. */
+    val SFONDI = listOf(
+        "nessuno" to "Tinta unita",
+        "griglia" to "Griglia HUD",
+        "stelle" to "Cielo stellato"
+    )
+
+    fun attuale(prefs: SharedPreferences): Palette {
+        val base = PALETTE.firstOrNull { it.id == prefs.getString("tema", "oro") } ?: PALETTE[0]
+        val tonalita = prefs.getInt("r_tonalita", -1)
+        return if (tonalita in 0..360) conTonalita(base, tonalita.toFloat()) else base
+    }
+
+    private fun esadecimale(c: Int) = String.format("#%06X", 0xFFFFFF and c)
+
+    /** La stessa palette con il colore principale spostato su un'altra tonalità (editor dal vivo). */
+    fun conTonalita(base: Palette, tonalita: Float): Palette {
+        val hsv = FloatArray(3)
+        Color.colorToHSV(base.accento, hsv)
+        val accento = Color.HSVToColor(floatArrayOf(tonalita, hsv[1].coerceAtLeast(0.45f), hsv[2].coerceAtLeast(0.8f)))
+        val chiaro = Color.HSVToColor(floatArrayOf(tonalita, 0.3f, 1f))
+        return Palette(
+            base.id, base.nome, esadecimale(base.sfondo), esadecimale(accento), esadecimale(chiaro),
+            esadecimale(base.ascolto), esadecimale(base.testo), esadecimale(base.tenue), esadecimale(base.superficie)
+        )
+    }
 
     fun conAlfa(colore: Int, alfa: Int) =
         Color.argb(alfa.coerceIn(0, 255), Color.red(colore), Color.green(colore), Color.blue(colore))

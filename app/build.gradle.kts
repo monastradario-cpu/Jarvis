@@ -46,6 +46,12 @@ android {
     kotlinOptions {
         jvmTarget = "17"
     }
+
+    packaging {
+        resources {
+            excludes += listOf("META-INF/LICENSE*", "META-INF/NOTICE*", "META-INF/*.md", "META-INF/DEPENDENCIES")
+        }
+    }
 }
 
 dependencies {
@@ -59,4 +65,15 @@ dependencies {
     implementation("androidx.core:core:1.13.1")
     // Posizione e promemoria di luogo
     implementation("com.google.android.gms:play-services-location:21.3.0")
+
+    // Vista dal vivo: fotocamera sempre aperta
+    implementation("androidx.activity:activity:1.9.3")
+    implementation("androidx.camera:camera-core:1.4.1")
+    implementation("androidx.camera:camera-camera2:1.4.1")
+    implementation("androidx.camera:camera-lifecycle:1.4.1")
+    implementation("androidx.camera:camera-view:1.4.1")
+
+    // Email (IMAP e SMTP)
+    implementation("com.sun.mail:android-mail:1.6.7")
+    implementation("com.sun.mail:android-activation:1.6.7")
 }

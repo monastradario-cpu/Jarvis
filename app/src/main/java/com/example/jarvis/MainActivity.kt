@@ -118,6 +118,8 @@ class MainActivity : Activity(), Cervello.Uscita {
     @Volatile private var parlando = false
 
     private var tts: TextToSpeech? = null
+    private lateinit var parlatore: Parlatore
+    private var risposteParziale = StringBuilder()
     private var riconoscitore: SpeechRecognizer? = null
     private var inAscolto = false
     @Volatile private var occupato = false
@@ -139,35 +141,50 @@ class MainActivity : Activity(), Cervello.Uscita {
         window.navigationBarColor = tema.sfondo
         costruisciInterfaccia()
 
+        parlatore = Parlatore(this, prefs,
+            alTermine = { domanda ->
+                parlando = false
+                aggiornaMic()
+                // Conversazione continua: Jarvis ha fatto una domanda, ascolto la risposta
+                if (domanda && visibile && !inAscolto && !occupato && prefs.getBoolean("dialogo_continuo", true)) {
+                    reattore.postDelayed({ if (!inAscolto && !occupato) iniziaAscolto() }, 350)
+                }
+            },
+            alInterrotto = { vuoleParlare ->
+                parlando = false
+                aggiornaMic()
+                stato.text = if (vuoleParlare) "" else "Interrotto."
+                if (vuoleParlare && visibile) reattore.postDelayed({ iniziaAscolto() }, 250)
+            }
+        )
         tts = TextToSpeech(this) { esito ->
             if (esito == TextToSpeech.SUCCESS) {
                 tts?.let { Voce.applica(it, prefs) }
+                parlatore.tts = tts
                 tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                     override fun onStart(utteranceId: String?) {
-                        runOnUiThread { parlando = true; aggiornaMic() }
+                        runOnUiThread { if (utteranceId?.startsWith("j") == true) { parlando = true; aggiornaMic() } }
                     }
 
                     override fun onDone(utteranceId: String?) {
-                        runOnUiThread {
-                            parlando = false
-                            aggiornaMic()
-                            // Conversazione continua: Jarvis ha fatto una domanda, ascolto la risposta
-                            if (utteranceId == "jarvis" && rispostaConDomanda && visibile && !inAscolto && !occupato &&
-                                prefs.getBoolean("dialogo_continuo", true)
-                            ) {
-                                rispostaConDomanda = false
-                                reattore.postDelayed({ if (!inAscolto && !occupato) iniziaAscolto() }, 350)
-                            }
-                        }
+                        parlatore.pezzoFinito(utteranceId)
                     }
 
                     @Deprecated("Richiesto dalle versioni vecchie di Android")
                     override fun onError(utteranceId: String?) {
-                        runOnUiThread { parlando = false; aggiornaMic() }
+                        parlatore.pezzoFinito(utteranceId)
+                    }
+
+                    override fun onStop(utteranceId: String?, interrupted: Boolean) {
+                        parlatore.pezzoFinito(utteranceId)
                     }
                 })
             }
         }
+        // Modelli vocali pronti in anticipo (per l'interruzione con "basta") e controlli proattivi
+        if (permessoMicrofono()) ImprontaVocale.carica(this) { }
+        Proattivo.programma(this)
+        WidgetJarvis.aggiorna(this)
 
         if (chiaveAttiva().isEmpty()) {
             aggiungiAlRegistro("Jarvis", "Benvenuto! Crea una chiave gratuita su aistudio.google.com/apikey e incollala in Cervello.")
@@ -191,8 +208,21 @@ class MainActivity : Activity(), Cervello.Uscita {
         controllaRichiestaAscolto(intent)
     }
 
-    /** Aperta dalla tessera rapida o dalla notifica: inizia subito ad ascoltare, o legge il riepilogo. */
+    /** Aperta dalla tessera rapida, dal widget, dall'assistente o dalla notifica: ascolta subito, o legge il riepilogo. */
     private fun controllaRichiestaAscolto(intento: Intent?) {
+        if (intento?.getBooleanExtra("attiva_auto", false) == true) {
+            intento.removeExtra("attiva_auto")
+            if (!ServizioJarvis.attivo) accendiSempreAttivo()
+            reattore.postDelayed({ parla("Buon viaggio. Chiuda pure l'app: quando vuole, dica Ehi Jarvis.") }, 700)
+            return
+        }
+        if (intento?.action == Intent.ACTION_ASSIST || intento?.action == Intent.ACTION_VOICE_COMMAND ||
+            intento?.action == "android.intent.action.SEARCH_LONG_PRESS"
+        ) {
+            intento.action = Intent.ACTION_MAIN
+            reattore.postDelayed({ iniziaAscolto() }, 400)
+            return
+        }
         if (intento?.getBooleanExtra("riepilogo", false) == true) {
             intento.removeExtra("riepilogo")
             reattore.postDelayed({ gestisciRichiesta("Buongiorno. Fammi il riepilogo del mattino.") }, 600)
@@ -255,6 +285,10 @@ class MainActivity : Activity(), Cervello.Uscita {
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         @Suppress("DEPRECATION")
         super.onActivityResult(requestCode, resultCode, data)
+        if (resultCode == RESULT_OK && requestCode in listOf(CODICE_ESPORTA, CODICE_IMPORTA, CODICE_CARTELLA)) {
+            risultatoDati(requestCode, data)
+            return
+        }
         if (requestCode == CODICE_FOTO) {
             val ok = resultCode == RESULT_OK && (fileFoto?.length() ?: 0L) > 0L
             stato.text = if (ok) "Guardo la foto..." else ""
@@ -270,6 +304,7 @@ class MainActivity : Activity(), Cervello.Uscita {
     }
 
     override fun onDestroy() {
+        parlatore.ferma()
         tts?.stop()
         tts?.shutdown()
         riconoscitore?.destroy()
@@ -337,7 +372,7 @@ class MainActivity : Activity(), Cervello.Uscita {
         // Riga di dati: data, ora, batteria, plugin
         infoHud = testoHud("", COLORE_TENUE, 9.5f, 0.12f).apply {
             gravity = Gravity.CENTER
-            visibility = if (prefs.getString("interfaccia", "hud") == "minimal") View.GONE else View.VISIBLE
+            visibility = if (prefs.getString("interfaccia", "hud") == "minimal" || !prefs.getBoolean("mostra_dati", true)) View.GONE else View.VISIBLE
         }
         radice.addView(infoHud, LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
@@ -347,11 +382,16 @@ class MainActivity : Activity(), Cervello.Uscita {
         reattore = ReattoreView(this).apply {
             isClickable = true
             contentDescription = "Tocca per parlare, tieni premuto per il menu"
-            ridotto = prefs.getString("animazioni", "piene") == "ridotte"
             palette = tema
-            forma = prefs.getString("forma", "sfera") ?: "sfera"
-            interfaccia = prefs.getString("interfaccia", "hud") ?: "hud"
-            setOnClickListener { if (inAscolto) fermaAscolto() else iniziaAscolto() }
+            applicaRegolazioni(this)
+            alCambioZoom = { z -> prefs.edit().putFloat("r_scala", z).apply() }
+            setOnClickListener {
+                when {
+                    inAscolto -> fermaAscolto()
+                    parlando || parlatore.attivo -> { parlatore.ferma(); parlando = false; aggiornaMic() }
+                    else -> iniziaAscolto()
+                }
+            }
             setOnLongClickListener { mostraImpostazioni(); true }
         }
         contenitoreSfera = FrameLayout(this)
@@ -367,8 +407,8 @@ class MainActivity : Activity(), Cervello.Uscita {
         stato = TextView(this).apply {
             setTextColor(COLORE_BIANCO)
             alpha = 0.75f
-            textSize = 14f
-            typeface = SERIF
+            textSize = 14f * scalaTesto()
+            typeface = carattere()
             gravity = Gravity.CENTER
         }
         radice.addView(stato, LinearLayout.LayoutParams(
@@ -378,7 +418,7 @@ class MainActivity : Activity(), Cervello.Uscita {
         // ---- Conversazione ----
         registro = TextView(this).apply {
             setTextColor(COLORE_BIANCO)
-            textSize = 15f
+            textSize = 15f * scalaTesto()
             setLineSpacing(dp(2).toFloat(), 1.15f)
             setTextIsSelectable(true)
         }
@@ -431,6 +471,39 @@ class MainActivity : Activity(), Cervello.Uscita {
 
         setContentView(radice)
         scriviInfoHud()
+    }
+
+    private fun scalaTesto() = when (prefs.getString("testo_dimensione", "normale")) {
+        "piccolo" -> 0.85f
+        "grande" -> 1.2f
+        "enorme" -> 1.45f
+        else -> 1f
+    }
+
+    private fun carattere(): Typeface = when (prefs.getString("testo_carattere", "serif")) {
+        "sans" -> Typeface.SANS_SERIF
+        "mono" -> Typeface.MONOSPACE
+        else -> SERIF
+    }
+
+    private fun famigliaCarattere() = when (prefs.getString("testo_carattere", "serif")) {
+        "sans" -> "sans-serif"
+        "mono" -> "monospace"
+        else -> "serif"
+    }
+
+    /** Applica al cuore animato forma, stile, sfondo e regolazioni dell'editor dal vivo. */
+    private fun applicaRegolazioni(r: ReattoreView) {
+        r.ridotto = prefs.getString("animazioni", "piene") == "ridotte"
+        r.forma = prefs.getString("forma", "sfera") ?: "sfera"
+        r.interfaccia = prefs.getString("interfaccia", "hud") ?: "hud"
+        r.sfondo = prefs.getString("sfondo", "nessuno") ?: "nessuno"
+        r.scala = prefs.getFloat("r_scala", 1f)
+        r.velocitaBase = prefs.getFloat("r_velocita", 1f)
+        r.numeroParticelle = prefs.getInt("r_particelle", 40)
+        r.luminosita = prefs.getFloat("r_luminosita", 1f)
+        r.spessore = prefs.getFloat("r_spessore", 1f)
+        r.tacche = prefs.getBoolean("r_tacche", true)
     }
 
     /** Riga di dati in alto: data, ora, batteria, plugin attivi e ricordi. */
@@ -497,7 +570,7 @@ class MainActivity : Activity(), Cervello.Uscita {
             }
             else -> {
                 riga = SpannableString("$testo$finale")
-                riga.setSpan(TypefaceSpan("serif"), 0, riga.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                riga.setSpan(TypefaceSpan(famigliaCarattere()), 0, riga.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
                 riga.setSpan(ForegroundColorSpan(COLORE_BIANCO), 0, riga.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
                 if (modoSottotitoli()) riga.setSpan(RelativeSizeSpan(1.12f), 0, riga.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
             }
@@ -558,7 +631,7 @@ class MainActivity : Activity(), Cervello.Uscita {
     //  MENU RADIALE E SOTTOMENÙ
     // ================================================================
 
-    private val VOCI_MENU = listOf("CERVELLO", "CARATTERE", "VOCE", "PLUGIN", "ATTIVO", "MATTINO", "ASPETTO")
+    private val VOCI_MENU = listOf("CERVELLO", "CARATTERE", "VOCE", "PLUGIN", "ATTIVO", "MATTINO", "ASPETTO", "COLLEGA", "DATI")
     private var menuRadiale: MenuRadialeView? = null
 
     /** Apre il menu radiale attorno alla sfera. */
@@ -575,7 +648,9 @@ class MainActivity : Activity(), Cervello.Uscita {
                     3 -> mostraPlugin()
                     4 -> mostraSempreAttivo()
                     5 -> mostraMattino()
-                    else -> mostraAspetto()
+                    6 -> mostraAspetto()
+                    7 -> mostraCollegamenti()
+                    else -> mostraDati()
                 }
             },
             alChiudere = { chiudiMenuRadiale() }
@@ -760,18 +835,47 @@ class MainActivity : Activity(), Cervello.Uscita {
             "Conversazione continua: quando Jarvis ti fa una domanda, ascolta subito la risposta",
             prefs.getBoolean("dialogo_continuo", true)
         )
+        val interrompibile = pagina.casella(
+            "Interrompibile: mentre parla, di' \"basta\" o \"stop\" per zittirlo, o \"Jarvis\" per parlargli sopra",
+            prefs.getBoolean("interrompibile", true)
+        )
         val confermaApp = pagina.casella(
             "Prima di aprire un'app, spiegami cosa farai e chiedimi conferma",
             prefs.getBoolean("conferma_app", false)
         )
         pagina.nota("Per gli acquisti e per cancellare appuntamenti Jarvis chiede sempre due conferme.")
+        pagina.titoloSezione("Velocità")
+        val rapidi = pagina.casella(
+            "Comandi istantanei: torcia, volume, sveglie, timer, musica, chiamate e ora senza IA (anche offline)",
+            prefs.getBoolean("comandi_rapidi", true)
+        )
+        val flusso = pagina.casella(
+            "Risposte in streaming: inizia a parlare mentre la risposta sta ancora arrivando",
+            prefs.getBoolean("streaming", true)
+        )
+        pagina.titoloSezione("Jarvis proattivo")
+        pagina.nota("Ti avvisa da solo: appuntamenti in arrivo (e quando partire), messaggi insistenti, pioggia. Mai a voce di notte.")
+        val proattivo = pagina.casella("Avvisi proattivi", prefs.getBoolean("proattivo", true))
+        val proCalendario = pagina.casella("Appuntamenti e quando partire", prefs.getBoolean("proattivo_calendario", true))
+        val proMessaggi = pagina.casella("Qualcuno ti scrive più volte di fila", prefs.getBoolean("proattivo_messaggi", true))
+        val proMeteo = pagina.casella("Pioggia in arrivo", prefs.getBoolean("proattivo_meteo", true))
+        val proVoce = pagina.casella("Dimmelo anche a voce (se è sempre attivo)", prefs.getBoolean("proattivo_voce", true))
         pagina.mostra {
             prefs.edit()
                 .putString("personalita", stile())
                 .putString("appellativo", appellativo.text.toString().trim())
                 .putBoolean("dialogo_continuo", dialogo.isChecked)
+                .putBoolean("interrompibile", interrompibile.isChecked)
                 .putBoolean("conferma_app", confermaApp.isChecked)
+                .putBoolean("comandi_rapidi", rapidi.isChecked)
+                .putBoolean("streaming", flusso.isChecked)
+                .putBoolean("proattivo", proattivo.isChecked)
+                .putBoolean("proattivo_calendario", proCalendario.isChecked)
+                .putBoolean("proattivo_messaggi", proMessaggi.isChecked)
+                .putBoolean("proattivo_meteo", proMeteo.isChecked)
+                .putBoolean("proattivo_voce", proVoce.isChecked)
                 .apply()
+            Proattivo.programma(this)
             aggiungiAlRegistro("Jarvis", "Carattere aggiornato.")
         }
     }
@@ -940,6 +1044,29 @@ class MainActivity : Activity(), Cervello.Uscita {
         pagina.bottone(if (ServizioJarvis.attivo) "Spegni la modalità sempre attiva" else "Accendi la modalità sempre attiva") {
             if (ServizioJarvis.attivo) spegniSempreAttivo() else accendiSempreAttivo()
         }
+        pagina.titoloSezione("Assistente del telefono")
+        pagina.nota("Rendi Jarvis l'assistente predefinito: tenendo premuto il tasto di accensione (o con il gesto " +
+            "dall'angolo) si apre Jarvis già in ascolto. Scegli Jarvis in \"App assistente digitale\".")
+        pagina.bottone("Imposta Jarvis come assistente") {
+            if (!apriImpostazione(Intent(Settings.ACTION_VOICE_INPUT_SETTINGS), silenzioso = true)) {
+                apriImpostazione(Intent(Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS))
+            }
+        }
+        pagina.titoloSezione("Auto e cuffie")
+        pagina.nota("Quando il telefono si collega al Bluetooth dell'auto Jarvis si mette in ascolto e risponde in breve. " +
+            "Con le cuffie ascolta anche a schermo spento." +
+            (prefs.getString("ultimo_bluetooth", "")?.takeIf { it.isNotBlank() }?.let { "\nUltimo dispositivo collegato: $it" } ?: ""))
+        val autoAttiva = pagina.casella("Modalità auto e cuffie automatica", prefs.getBoolean("auto_attiva", true))
+        val nomiAuto = pagina.campo("Nome Bluetooth della tua auto (facoltativo, separati da virgola)", prefs.getString("auto_nomi", "") ?: "")
+        pagina.bottone("L'ultimo dispositivo collegato è la mia auto") {
+            val ultimo = prefs.getString("ultimo_bluetooth", "") ?: ""
+            if (ultimo.isNotBlank()) nomiAuto.setText(ultimo) else aggiungiAlRegistro("Jarvis", "Collega prima il telefono all'auto.")
+        }
+        if (Build.VERSION.SDK_INT >= 31 && checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+            pagina.bottone("Permetti a Jarvis di vedere i dispositivi Bluetooth") {
+                requestPermissions(arrayOf(Manifest.permission.BLUETOOTH_CONNECT), 5)
+            }
+        }
         pagina.titoloSezione("Permessi per le altre app")
         pagina.bottone("Accesso alle notifiche" + if (NotificheJarvis.abilitato(this)) " ✓" else "") {
             apriImpostazione(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
@@ -969,6 +1096,8 @@ class MainActivity : Activity(), Cervello.Uscita {
                 .putBoolean("verifica_voce", soloMiaVoce.isChecked)
                 .putString("rigore_voce", rigore())
                 .putString("risparmio", risparmio())
+                .putBoolean("auto_attiva", autoAttiva.isChecked)
+                .putString("auto_nomi", nomiAuto.text.toString().trim())
                 .apply()
             if (cambiata && ServizioJarvis.attivo) {
                 stopService(Intent(this, ServizioJarvis::class.java))
@@ -1097,6 +1226,18 @@ class MainActivity : Activity(), Cervello.Uscita {
             ),
             prefs.getString("conversazione", "sottotitoli") ?: "sottotitoli"
         )
+        pagina.titoloSezione("Sfondo")
+        val sfondo = pagina.scelta(Tema.SFONDI, prefs.getString("sfondo", "nessuno") ?: "nessuno")
+        pagina.titoloSezione("Testo")
+        val dimensione = pagina.scelta(
+            listOf("piccolo" to "Piccolo", "normale" to "Normale", "grande" to "Grande", "enorme" to "Molto grande"),
+            prefs.getString("testo_dimensione", "normale") ?: "normale"
+        )
+        val carattereScelto = pagina.scelta(
+            listOf("serif" to "Elegante (con grazie)", "sans" to "Moderno", "mono" to "Tecnico (macchina da scrivere)"),
+            prefs.getString("testo_carattere", "serif") ?: "serif"
+        )
+        val dati = pagina.casella("Riga di dati in alto (ora, batteria, plugin)", prefs.getBoolean("mostra_dati", true))
         pagina.titoloSezione("Animazioni")
         val animazioni = pagina.scelta(
             listOf(
@@ -1105,21 +1246,345 @@ class MainActivity : Activity(), Cervello.Uscita {
             ),
             prefs.getString("animazioni", "piene") ?: "piene"
         )
+        pagina.titoloSezione("Gioca con la sfera")
+        pagina.nota("Due dita per lo zoom · trascina in cerchio per far girare gli anelli · lancia con il dito per farli ruotare · " +
+            "tocca per le onde di luce · doppio tocco per tornare normale · cinque tocchi veloci per una sorpresa.")
+        pagina.bottone("✎ Modifica dal vivo: dimensione, velocità, particelle, colore...") { mostraEditor() }
         pagina.mostra {
-            val cambiaTutto = colori() != tema.id || interfaccia() != prefs.getString("interfaccia", "hud")
+            val cambiaTutto = colori() != tema.id || interfaccia() != prefs.getString("interfaccia", "hud") ||
+                dimensione() != prefs.getString("testo_dimensione", "normale") ||
+                carattereScelto() != prefs.getString("testo_carattere", "serif") || dati.isChecked != prefs.getBoolean("mostra_dati", true)
             prefs.edit()
                 .putString("conversazione", modo())
                 .putString("animazioni", animazioni())
                 .putString("tema", colori())
                 .putString("interfaccia", interfaccia())
                 .putString("forma", forma())
+                .putString("sfondo", sfondo())
+                .putString("testo_dimensione", dimensione())
+                .putString("testo_carattere", carattereScelto())
+                .putBoolean("mostra_dati", dati.isChecked)
                 .apply()
             if (cambiaTutto) {
                 recreate()      // ricostruisce la schermata con i nuovi colori
             } else {
-                reattore.ridotto = animazioni() == "ridotte"
-                reattore.forma = forma()
+                applicaRegolazioni(reattore)
                 ridisegnaConversazione()
+            }
+        }
+    }
+
+    // ================================================================
+    //  EDITOR DAL VIVO: si regola il cuore animato e si vede subito il risultato
+    // ================================================================
+
+    private var editor: View? = null
+
+    private fun mostraEditor() {
+        if (editor != null) return
+        chiudiMenuRadiale()
+        val r = reattore
+        val pannello = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(10), dp(16), dp(10))
+        }
+        val contenitore = ScrollView(this).apply {
+            addView(pannello)
+            background = GradientDrawable().apply {
+                cornerRadius = dp(18).toFloat()
+                setStroke(dp(1), Tema.conAlfa(tema.accento, 150))
+                setColor(Tema.conAlfa(tema.superficie, 235))
+            }
+        }
+        val intestazione = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        intestazione.addView(testoHud("MODIFICA DAL VIVO", COLORE_ORO, 12f, 0.2f),
+            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        intestazione.addView(testoHud("✕", COLORE_ORO, 16f, 0f).apply {
+            setPadding(dp(12), dp(4), dp(4), dp(4))
+            setOnClickListener { chiudiEditor(false) }
+        })
+        pannello.addView(intestazione)
+
+        fun cursore(etichetta: String, minimo: Float, massimo: Float, valore: Float, formato: (Float) -> String, cambia: (Float) -> Unit) {
+            val testo = TextView(this).apply {
+                setTextColor(COLORE_BIANCO)
+                textSize = 12f
+                setPadding(0, dp(8), 0, 0)
+            }
+            fun scrivi(v: Float) { testo.text = "$etichetta: ${formato(v)}" }
+            scrivi(valore)
+            pannello.addView(testo)
+            pannello.addView(SeekBar(this).apply {
+                max = 1000
+                progress = (((valore - minimo) / (massimo - minimo)) * 1000).toInt().coerceIn(0, 1000)
+                setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                    override fun onProgressChanged(b: SeekBar?, p: Int, utente: Boolean) {
+                        val v = minimo + (massimo - minimo) * p / 1000f
+                        scrivi(v)
+                        cambia(v)
+                    }
+                    override fun onStartTrackingTouch(b: SeekBar?) {}
+                    override fun onStopTrackingTouch(b: SeekBar?) {}
+                })
+            })
+        }
+        val percento: (Float) -> String = { "${(it * 100).roundToInt()}%" }
+        cursore("Dimensione", 0.5f, 1.8f, r.scala, percento) { r.scala = it }
+        cursore("Velocità", 0f, 3f, r.velocitaBase, percento) { r.velocitaBase = it }
+        cursore("Particelle", 0f, 160f, r.numeroParticelle.toFloat(), { "${it.roundToInt()}" }) { r.numeroParticelle = it.roundToInt() }
+        cursore("Luminosità", 0.3f, 1.6f, r.luminosita, percento) { r.luminosita = it }
+        cursore("Spessore delle linee", 0.5f, 2.5f, r.spessore, percento) { r.spessore = it }
+        val base = Tema.PALETTE.firstOrNull { it.id == prefs.getString("tema", "oro") } ?: Tema.PALETTE[0]
+        var tonalita = prefs.getInt("r_tonalita", -1)
+        cursore("Colore", -1f, 360f, tonalita.toFloat(), { if (it < 0f) "del tema" else "tonalità ${it.roundToInt()}°" }) {
+            tonalita = it.roundToInt()
+            r.palette = if (tonalita >= 0) Tema.conTonalita(base, tonalita.toFloat()) else base
+        }
+
+        // scelte che si cambiano con un tocco
+        fun ciclo(etichetta: String, opzioni: List<Pair<String, String>>, attuale: () -> String, imposta: (String) -> Unit) {
+            val b = testoHud("", COLORE_ORO, 12f, 0.1f).apply {
+                setPadding(0, dp(12), 0, dp(12))
+            }
+            fun scrivi() {
+                val nome = opzioni.firstOrNull { it.first == attuale() }?.second?.substringBefore(":") ?: attuale()
+                b.text = "$etichetta: ${nome.uppercase(Locale.ITALIAN)}  ▸"
+            }
+            scrivi()
+            b.setOnClickListener {
+                val i = opzioni.indexOfFirst { it.first == attuale() }
+                imposta(opzioni[(i + 1) % opzioni.size].first)
+                scrivi()
+            }
+            pannello.addView(b)
+        }
+        ciclo("FORMA", Tema.FORME, { r.forma }) { r.forma = it }
+        ciclo("STILE", Tema.INTERFACCE, { r.interfaccia }) { r.interfaccia = it }
+        ciclo("SFONDO", Tema.SFONDI, { r.sfondo }) { r.sfondo = it }
+        ciclo("TACCHE", listOf("si" to "Sì", "no" to "No"), { if (r.tacche) "si" else "no" }) { r.tacche = it == "si" }
+
+        val riga = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, dp(8), 0, 0)
+        }
+        fun azione(t: String, f: () -> Unit) = riga.addView(Button(this).apply {
+            text = t
+            isAllCaps = false
+            setOnClickListener { f() }
+        }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        azione("Salva") {
+            prefs.edit()
+                .putFloat("r_scala", r.scala)
+                .putFloat("r_velocita", r.velocitaBase)
+                .putInt("r_particelle", r.numeroParticelle)
+                .putFloat("r_luminosita", r.luminosita)
+                .putFloat("r_spessore", r.spessore)
+                .putBoolean("r_tacche", r.tacche)
+                .putInt("r_tonalita", tonalita)
+                .putString("forma", r.forma)
+                .putString("interfaccia", r.interfaccia)
+                .putString("sfondo", r.sfondo)
+                .apply()
+            chiudiEditor(true)
+        }
+        azione("Sorpresa") {
+            val c = kotlin.random.Random(System.nanoTime())
+            r.forma = Tema.FORME[c.nextInt(Tema.FORME.size)].first
+            r.interfaccia = Tema.INTERFACCE[c.nextInt(Tema.INTERFACCE.size)].first
+            r.sfondo = Tema.SFONDI[c.nextInt(Tema.SFONDI.size)].first
+            r.velocitaBase = 0.5f + c.nextFloat() * 2f
+            r.numeroParticelle = c.nextInt(20, 160)
+            r.spessore = 0.7f + c.nextFloat() * 1.3f
+            tonalita = c.nextInt(0, 360)
+            r.palette = Tema.conTonalita(base, tonalita.toFloat())
+            chiudiEditor(false, ricarica = false)
+            mostraEditor()
+        }
+        azione("Predefinito") {
+            prefs.edit().remove("r_scala").remove("r_velocita").remove("r_particelle").remove("r_luminosita")
+                .remove("r_spessore").remove("r_tacche").remove("r_tonalita").apply()
+            r.palette = base
+            applicaRegolazioni(r)
+            chiudiEditor(false, ricarica = false)
+            mostraEditor()
+        }
+        pannello.addView(riga)
+
+        editor = contenitore
+        contenitoreSfera.addView(contenitore, FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT, (contenitoreSfera.height * 0.62f).toInt().coerceAtLeast(dp(260)), Gravity.BOTTOM
+        ))
+    }
+
+    private fun chiudiEditor(salvato: Boolean, ricarica: Boolean = true) {
+        editor?.let { contenitoreSfera.removeView(it) }
+        editor = null
+        if (salvato) {
+            val cambiaColore = prefs.getInt("r_tonalita", -1) >= 0 || tema != Tema.attuale(prefs)
+            aggiungiAlRegistro("Jarvis", "Aspetto salvato.")
+            if (cambiaColore) recreate()
+        } else if (ricarica) {
+            // annullato: torna come prima
+            reattore.palette = tema
+            applicaRegolazioni(reattore)
+        }
+    }
+
+    // ---------- COLLEGAMENTI: casa, email, PC ----------
+    private fun mostraCollegamenti() {
+        val pagina = Pagina("Collegamenti")
+        pagina.titoloSezione("Casa intelligente · Home Assistant")
+        pagina.nota("Home Assistant è gratuito e collega quasi tutto: luci, prese, termostati, Google Home, Alexa, Tuya/Smart Life, " +
+            "Hue, Shelly, Xiaomi. Token: nel tuo profilo di Home Assistant > Sicurezza > Token di accesso a lunga durata.")
+        val casaUrl = pagina.campo("Indirizzo (es. http://192.168.1.10:8123)", prefs.getString("casa_url", "") ?: "")
+        val casaToken = pagina.campo("Token di accesso", prefs.getString("casa_token", "") ?: "", true)
+        pagina.titoloSezione("Scorciatoie web")
+        pagina.nota("Una per riga: nome = indirizzo. Per esempio:\ncancello = https://maker.ifttt.com/trigger/cancello/with/key/...\n" +
+            "presa = http://192.168.1.50/relay/0?turn=toggle\nMetti POST prima dell'indirizzo se il servizio lo richiede.")
+        val scorciatoie = EditText(this).apply {
+            setText(prefs.getString("scorciatoie", "") ?: "")
+            minLines = 3
+            textSize = 13f
+        }
+        pagina.contenitore.addView(scorciatoie)
+
+        pagina.titoloSezione("Email")
+        pagina.nota("Per Gmail serve una \"password per le app\": myaccount.google.com/apppasswords (richiede la verifica in due passaggi). " +
+            "Funziona anche con Libero, Yahoo, iCloud e altre caselle IMAP. Outlook/Hotmail non accetta più queste password.")
+        val email = pagina.campo("Il tuo indirizzo email", prefs.getString("posta_indirizzo", "") ?: "")
+        val emailPassword = pagina.campo("Password per le app", prefs.getString("posta_password", "") ?: "", true)
+        val imap = pagina.campo("Server IMAP (facoltativo)", prefs.getString("posta_imap", "") ?: "")
+        val smtp = pagina.campo("Server SMTP (facoltativo)", prefs.getString("posta_smtp", "") ?: "")
+
+        pagina.titoloSezione("PC Windows")
+        pagina.nota("Sul PC avvia jarvis_pc.py (lo trovi nel progetto su GitHub): ti mostra indirizzo, codice e MAC da scrivere qui. " +
+            "PC e telefono devono essere sulla stessa rete Wi-Fi. Per accenderlo da spento attiva il Wake-on-LAN nel BIOS. " +
+            "Per mandare un file al PC: Condividi > Jarvis: invia al PC.")
+        val pcIp = pagina.campo("Indirizzo del PC (es. 192.168.1.20)", prefs.getString("pc_ip", "") ?: "")
+        val pcToken = pagina.campo("Codice di collegamento", prefs.getString("pc_token", "") ?: "", true)
+        val pcMac = pagina.campo("MAC del PC, per accenderlo (facoltativo)", prefs.getString("pc_mac", "") ?: "")
+        pagina.bottone("Prova il collegamento") {
+            prefs.edit().putString("pc_ip", pcIp.text.toString().trim()).putString("pc_token", pcToken.text.toString().trim())
+                .putString("casa_url", casaUrl.text.toString().trim()).putString("casa_token", casaToken.text.toString().trim())
+                .putString("posta_indirizzo", email.text.toString().trim()).putString("posta_password", emailPassword.text.toString().trim())
+                .putString("posta_imap", imap.text.toString().trim()).putString("posta_smtp", smtp.text.toString().trim())
+                .apply()
+            aggiungiAlRegistro("Jarvis", "Provo i collegamenti...")
+            Thread {
+                val esiti = mutableListOf<String>()
+                if (pcIp.text.isNotBlank()) esiti.add("PC: " + PontePc(prefs).comando("stato", ""))
+                if (casaUrl.text.isNotBlank()) esiti.add("Casa: " + Casa(prefs).elenca("").lines().size.let { "$it dispositivi trovati" })
+                if (email.text.isNotBlank()) esiti.add("Email: " + Posta(prefs).nonLette().let { if (it >= 0) "collegata, $it non lette" else "non riesco ad accedere" })
+                runOnUiThread { aggiungiAlRegistro("Jarvis", if (esiti.isEmpty()) "Non c'è niente da provare." else esiti.joinToString("\n")) }
+            }.start()
+        }
+        pagina.mostra {
+            prefs.edit()
+                .putString("casa_url", casaUrl.text.toString().trim())
+                .putString("casa_token", casaToken.text.toString().trim())
+                .putString("scorciatoie", scorciatoie.text.toString().trim())
+                .putString("posta_indirizzo", email.text.toString().trim())
+                .putString("posta_password", emailPassword.text.toString().trim())
+                .putString("posta_imap", imap.text.toString().trim())
+                .putString("posta_smtp", smtp.text.toString().trim())
+                .putString("pc_ip", pcIp.text.toString().trim())
+                .putString("pc_token", pcToken.text.toString().trim())
+                .putString("pc_mac", pcMac.text.toString().trim())
+                .apply()
+            aggiungiAlRegistro("Jarvis", "Collegamenti salvati.")
+        }
+    }
+
+    // ---------- DATI: statistiche e backup ----------
+    private val CODICE_ESPORTA = 20
+    private val CODICE_IMPORTA = 21
+    private val CODICE_CARTELLA = 22
+
+    private fun mostraDati() {
+        val pagina = Pagina("Dati")
+        pagina.titoloSezione("Statistiche")
+        pagina.contenitore.addView(TextView(this).apply {
+            text = Statistiche.descrivi(this@MainActivity)
+            typeface = MONO
+            textSize = 11.5f
+            setTextColor(COLORE_BIANCO)
+            setPadding(0, dp(6), 0, 0)
+            setTextIsSelectable(true)
+        })
+        pagina.titoloSezione("Backup della memoria")
+        pagina.nota("Salva ricordi, lezioni, routine, diario, note, promemoria, luoghi, voce registrata e impostazioni in un file. " +
+            "Puoi metterlo su Google Drive e ripristinarlo su un altro telefono. Le chiavi API e le password non vengono copiate.")
+        pagina.bottone("Salva un backup adesso") {
+            @Suppress("DEPRECATION")
+            startActivityForResult(
+                Intent(Intent.ACTION_CREATE_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE)
+                    .setType("application/json").putExtra(Intent.EXTRA_TITLE, Backup.nomeFile()),
+                CODICE_ESPORTA
+            )
+        }
+        pagina.bottone("Ripristina da un backup") {
+            @Suppress("DEPRECATION")
+            startActivityForResult(
+                Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*"),
+                CODICE_IMPORTA
+            )
+        }
+        val cartella = prefs.getString("backup_cartella", "") ?: ""
+        pagina.bottone(if (cartella.isEmpty()) "Backup automatico ogni settimana: scegli la cartella" else "Backup automatico attivo ✓ (cambia cartella)") {
+            @Suppress("DEPRECATION")
+            startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE), CODICE_CARTELLA)
+        }
+        if (cartella.isNotEmpty()) {
+            pagina.bottone("Disattiva il backup automatico") {
+                prefs.edit().remove("backup_cartella").apply()
+                aggiungiAlRegistro("Jarvis", "Backup automatico disattivato.")
+            }
+        }
+        pagina.bottone("Azzera le statistiche") {
+            Statistiche.azzera(this)
+            aggiungiAlRegistro("Jarvis", "Statistiche azzerate.")
+        }
+        pagina.mostra()
+    }
+
+    private fun risultatoDati(codice: Int, dati: Intent?) {
+        val uri = dati?.data ?: return
+        when (codice) {
+            CODICE_ESPORTA -> Thread {
+                val esito = try {
+                    contentResolver.openOutputStream(uri)?.use { it.write(Backup.esporta(this).toByteArray(Charsets.UTF_8)) }
+                    "Backup salvato."
+                } catch (e: Exception) {
+                    "Non sono riuscito a salvare il backup: ${e.message}"
+                }
+                runOnUiThread { aggiungiAlRegistro("Memoria", esito) }
+            }.start()
+            CODICE_IMPORTA -> Thread {
+                val esito = try {
+                    val testo = contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() } ?: ""
+                    Backup.importa(this, testo)
+                } catch (e: Exception) {
+                    "Non sono riuscito a leggere il backup: ${e.message}"
+                }
+                runOnUiThread {
+                    aggiungiAlRegistro("Memoria", esito)
+                    scriviInfoHud()
+                }
+            }.start()
+            CODICE_CARTELLA -> {
+                try {
+                    contentResolver.takePersistableUriPermission(
+                        uri, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                    )
+                } catch (e: Exception) { }
+                prefs.edit().putString("backup_cartella", uri.toString()).apply()
+                Thread {
+                    val esito = Backup.salvaInCartella(this, uri)
+                    runOnUiThread { aggiungiAlRegistro("Memoria", "Backup automatico attivo. $esito") }
+                }.start()
             }
         }
     }
@@ -1226,22 +1691,18 @@ class MainActivity : Activity(), Cervello.Uscita {
             requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), CODICE_MIC)
             return
         }
-        if (!SpeechRecognizer.isRecognitionAvailable(this)) {
+        if (!Orecchie.disponibile(this)) {
             aggiungiAlRegistro("Jarvis", "Il riconoscimento vocale non è disponibile. Installa o aggiorna l'app Google.")
             return
         }
-        tts?.stop()
+        parlatore.ferma()
+        parlando = false
         if (riconoscitore == null) {
-            riconoscitore = SpeechRecognizer.createSpeechRecognizer(this).apply {
+            riconoscitore = Orecchie.crea(this).apply {
                 setRecognitionListener(ascoltatore)
             }
         }
-        val intento = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE, "it-IT")
-            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-        }
-        riconoscitore?.startListening(intento)
+        riconoscitore?.startListening(Orecchie.richiesta(this, true))
         inAscolto = true
         aggiornaMic()
         stato.text = ""
@@ -1320,13 +1781,8 @@ class MainActivity : Activity(), Cervello.Uscita {
     //  BOCCA: sintesi vocale
     // ================================================================
 
-    private var rispostaConDomanda = false
-
     private fun parla(testo: String) {
-        val pulito = testo.replace(Regex("[*#_`]"), "")
-        rispostaConDomanda = pulito.trim().endsWith("?")
-        tts?.let { Voce.applica(it, prefs) }
-        tts?.speak(pulito, TextToSpeech.QUEUE_FLUSH, null, "jarvis")
+        parlatore.di(testo)
     }
 
     // ================================================================
@@ -1335,24 +1791,36 @@ class MainActivity : Activity(), Cervello.Uscita {
 
     private fun gestisciRichiesta(testo: String) {
         if (occupato) return
-        if (chiaveAttiva().isEmpty()) {
-            mostraCervello()
-            return
-        }
         aggiungiAlRegistro("Tu", testo)
         occupato = true
         stato.text = ""
         aggiornaMic()
+        parlatore.inizia()
+        risposteParziale = StringBuilder()
 
         Thread {
-            val risposta = cervello.rispondi(testo)
+            // la risposta arriva a pezzi: Jarvis parla subito e i sottotitoli si scrivono man mano
+            val risposta = cervello.rispondi(testo) { pezzo ->
+                parlatore.aggiungi(pezzo)
+                runOnUiThread {
+                    risposteParziale.append(pezzo)
+                    if (modoSottotitoli()) {
+                        ultimaRisposta = risposteParziale.toString()
+                        ridisegnaConversazione()
+                    } else {
+                        stato.text = risposteParziale.toString().takeLast(160)
+                    }
+                }
+            }
             runOnUiThread {
                 occupato = false
                 stato.text = ""
                 aggiornaMic()
                 aggiungiAlRegistro("Jarvis", risposta.testo)
                 if (risposta.fonti.isNotEmpty()) aggiungiAlRegistro("Fonti", risposta.fonti.joinToString(" · "))
-                parla(risposta.testo)
+                parlatore.fine(risposta.testo)
+                if (risposta.mancaChiave) mostraCervello()
+                scriviInfoHud()
             }
             cervello.manutenzione()
         }.start()

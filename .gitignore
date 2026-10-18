@@ -5,4 +5,5 @@ local.properties
 .idea/
 .DS_Store
 app/src/main/assets/model-en-us/
+app/src/main/assets/model-it/
 app/src/main/assets/model-spk/

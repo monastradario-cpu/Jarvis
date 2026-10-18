@@ -111,23 +111,26 @@ class NotificheJarvis : NotificationListenerService() {
     }
 
     override fun onNotificationPosted(sbn: StatusBarNotification) {
-        registra(sbn)
+        val messaggio = registra(sbn) ?: return
+        // Jarvis proattivo: avvisa se qualcuno scrive più volte di fila
+        try { Proattivo.messaggioRicevuto(this, sbn.packageName, messaggio.app, messaggio.mittente) } catch (e: Exception) { }
     }
 
-    private fun registra(sbn: StatusBarNotification) {
-        if (sbn.packageName == packageName) return
+    private fun registra(sbn: StatusBarNotification): Messaggio? {
+        if (sbn.packageName == packageName) return null
         val n = sbn.notification
-        if (sbn.isOngoing || (n.flags and Notification.FLAG_GROUP_SUMMARY) != 0) return
+        if (sbn.isOngoing || (n.flags and Notification.FLAG_GROUP_SUMMARY) != 0) return null
         val extra = n.extras
-        val mittente = extra.getCharSequence(Notification.EXTRA_TITLE)?.toString() ?: return
+        val mittente = extra.getCharSequence(Notification.EXTRA_TITLE)?.toString() ?: return null
         val testo = (extra.getCharSequence(Notification.EXTRA_BIG_TEXT) ?: extra.getCharSequence(Notification.EXTRA_TEXT))
-            ?.toString() ?: return
-        if (testo.isBlank()) return
+            ?.toString() ?: return null
+        if (testo.isBlank()) return null
         val messaggio = Messaggio(sbn.key, nomeApp(sbn.packageName), mittente, testo.take(300), sbn.postTime)
         synchronized(recenti) {
             recenti.removeAll { it.chiave == messaggio.chiave && it.testo == messaggio.testo }
             recenti.add(messaggio)
             while (recenti.size > MASSIMO) recenti.removeAt(0)
         }
+        return messaggio
     }
 }

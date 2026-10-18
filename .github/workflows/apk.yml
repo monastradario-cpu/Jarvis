@@ -26,14 +26,15 @@ jobs:
         with:
           gradle-version: "8.10.2"
 
-      - name: Scarica il modello per la parola di attivazione
+      - name: Scarica i modelli vocali
         run: |
-          curl -sSL -o modello.zip https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip
+          # Parola di attivazione e interruzione: modello italiano piccolo (offline)
+          curl -sSL -o modello.zip https://alphacephei.com/vosk/models/vosk-model-small-it-0.22.zip
           unzip -q modello.zip
-          mkdir -p app/src/main/assets/model-en-us
-          cp -r vosk-model-small-en-us-0.15/* app/src/main/assets/model-en-us/
-          echo "vosk-model-small-en-us-0.15" > app/src/main/assets/model-en-us/uuid
-          du -sh app/src/main/assets/model-en-us
+          mkdir -p app/src/main/assets/model-it
+          cp -r vosk-model-small-it-0.22/* app/src/main/assets/model-it/
+          echo "vosk-model-small-it-0.22" > app/src/main/assets/model-it/uuid
+          du -sh app/src/main/assets/model-it
           # Modello per riconoscere la voce dell'utente
           curl -sSL -o voce.zip https://alphacephei.com/vosk/models/vosk-model-spk-0.4.zip
           unzip -q voce.zip
@@ -43,7 +44,16 @@ jobs:
           du -sh app/src/main/assets/model-spk
 
       - name: Costruisci l'APK
-        run: gradle assembleDebug --no-daemon --stacktrace
+        run: |
+          set -o pipefail
+          gradle assembleDebug --no-daemon --stacktrace 2>&1 | tee build.log
+
+      - name: Riporta gli errori di compilazione
+        if: failure()
+        run: |
+          grep -E "^e: |error:|What went wrong|AAPT|Execution failed|> " build.log | grep -v "^> Task" | head -60 > errori.txt || true
+          M=$(sed ':a;N;$!ba;s/%/%25/g;s/\r/%0D/g;s/\n/%0A/g' errori.txt)
+          echo "::error title=compilazione::$M"
 
       - name: Rinomina l'APK
         run: cp app/build/outputs/apk/debug/app-debug.apk Jarvis.apk
