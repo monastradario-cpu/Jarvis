@@ -26,6 +26,15 @@ jobs:
         with:
           gradle-version: "8.10.2"
 
+      - name: Scarica il modello per la parola di attivazione
+        run: |
+          curl -sSL -o modello.zip https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip
+          unzip -q modello.zip
+          mkdir -p app/src/main/assets/model-en-us
+          cp -r vosk-model-small-en-us-0.15/* app/src/main/assets/model-en-us/
+          echo "vosk-model-small-en-us-0.15" > app/src/main/assets/model-en-us/uuid
+          du -sh app/src/main/assets/model-en-us
+
       - name: Costruisci l'APK
         run: gradle assembleDebug --no-daemon --stacktrace
 

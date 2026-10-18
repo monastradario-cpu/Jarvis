@@ -14,6 +14,11 @@ android {
         // Ogni build su GitHub ha un numero più alto, così l'app si aggiorna senza disinstallarla
         versionCode = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 1
         versionName = "1." + (System.getenv("GITHUB_RUN_NUMBER") ?: "0")
+
+        // Solo i processori dei telefoni moderni: l'app pesa meno
+        ndk {
+            abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+        }
     }
 
     // Chiave fissa: gli aggiornamenti si installano sopra la versione precedente
@@ -41,4 +46,12 @@ android {
     kotlinOptions {
         jvmTarget = "17"
     }
+}
+
+dependencies {
+    // Parola di attivazione "Jarvis" riconosciuta offline
+    implementation("com.alphacephei:vosk-android:0.3.47") {
+        exclude(group = "net.java.dev.jna")
+    }
+    implementation("net.java.dev.jna:jna:5.13.0@aar")
 }
