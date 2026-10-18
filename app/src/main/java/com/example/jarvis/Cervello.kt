@@ -168,6 +168,29 @@ class Cervello private constructor(private val ctx: Context) {
 
     fun numeroRichieste() = leggiDiario().length()
 
+    /** Il carattere di Jarvis, scelto nelle impostazioni. */
+    private fun personalita(): String {
+        val stile = prefs.getString("personalita", "maggiordomo") ?: "maggiordomo"
+        val appellativo = (prefs.getString("appellativo", "signore") ?: "").trim()
+        val nome = if (appellativo.isNotEmpty()) " e chiamalo \"$appellativo\"" else ""
+        return when (stile) {
+            "formale" ->
+                "Sei formale, preciso ed essenziale, come un assistente professionale. " +
+                    "Dai del lei all'utente$nome. Niente battute: vai dritto al punto con cortesia."
+            "amichevole" ->
+                "Sei amichevole, spontaneo e caloroso, come un amico molto in gamba. " +
+                    "Dai del tu all'utente" + (if (appellativo.isNotEmpty()) " e ogni tanto chiamalo \"$appellativo\"" else "") +
+                    ". Puoi scherzare in modo leggero."
+            else ->
+                "Hai la personalità di un maggiordomo digitale all'inglese: elegante, calmo, impeccabilmente " +
+                    "cortese e con un umorismo asciutto e sottile. Dai del lei all'utente$nome. " +
+                    "Ogni tanto, quando viene naturale, aggiungi una breve battuta ironica e garbata, " +
+                    "per esempio commentando con eleganza un orario insolito o una richiesta curiosa. " +
+                    "Mai battute su cose serie, tristi o urgenti, e mai più di una per risposta. " +
+                    "Frasi brevi, precise e raffinate."
+        }
+    }
+
     // ================================================================
     //  PROMPT DI SISTEMA: personalità + memoria di fondo
     // ================================================================
@@ -187,6 +210,7 @@ class Cervello private constructor(private val ctx: Context) {
         p.append("niente elenchi, niente asterischi, niente emoji, niente link. ")
         p.append("Usa gli strumenti quando servono per agire sul telefono e non inventare risultati. ")
         p.append("Adesso è $adesso. La città predefinita per il meteo è $citta.\n\n")
+        p.append("PERSONALITÀ\n").append(personalita()).append("\n\n")
 
         p.append("COME MIGLIORARE DA SOLO\n")
         p.append("- Quando scopri un fatto stabile o una preferenza dell'utente (nome, persone care, gusti, ")

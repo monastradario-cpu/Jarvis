@@ -515,6 +515,28 @@ class MainActivity : Activity(), Cervello.Uscita {
             plugin.id to casella
         }
 
+        titoloSezione("Personalità")
+        nota("Il modo di parlare di Jarvis.")
+        val sceltaMaggiordomo = RadioButton(this).apply { text = "Maggiordomo ironico: elegante, cortese, battute asciutte"; id = View.generateViewId() }
+        val sceltaFormale = RadioButton(this).apply { text = "Formale serio: preciso ed essenziale"; id = View.generateViewId() }
+        val sceltaAmichevole = RadioButton(this).apply { text = "Amichevole: dà del tu, tono caldo"; id = View.generateViewId() }
+        val gruppoPersonalita = RadioGroup(this).apply {
+            orientation = RadioGroup.VERTICAL
+            addView(sceltaMaggiordomo)
+            addView(sceltaFormale)
+            addView(sceltaAmichevole)
+            check(
+                when (prefs.getString("personalita", "maggiordomo")) {
+                    "formale" -> sceltaFormale.id
+                    "amichevole" -> sceltaAmichevole.id
+                    else -> sceltaMaggiordomo.id
+                }
+            )
+        }
+        contenitore.addView(gruppoPersonalita)
+        val appellativo = campo("Come ti chiama (es. signore, signora, Dario; vuoto per nessuno)",
+            prefs.getString("appellativo", "signore") ?: "")
+
         titoloSezione("Voce")
         nota("Scegli tra le voci italiane del telefono e regola tono e velocità.")
         var tonoScelto = prefs.getFloat("voce_tono", Voce.TONO_PREDEFINITO)
@@ -662,6 +684,15 @@ class MainActivity : Activity(), Cervello.Uscita {
                     .putString("citta", citta.text.toString().trim().ifBlank { Cervello.CITTA_PREDEFINITA })
                 for ((id, casella) in caselle) modifica.putBoolean("plugin_$id", casella.isChecked)
                 modifica.putFloat("voce_tono", tonoScelto).putFloat("voce_velocita", velocitaScelta)
+                modifica.putString(
+                    "personalita",
+                    when (gruppoPersonalita.checkedRadioButtonId) {
+                        sceltaFormale.id -> "formale"
+                        sceltaAmichevole.id -> "amichevole"
+                        else -> "maggiordomo"
+                    }
+                )
+                modifica.putString("appellativo", appellativo.text.toString().trim())
                 val parolaCambiata = parolaAttivazione.isChecked != prefs.getBoolean("parola_attivazione", true)
                 modifica.putBoolean("parola_attivazione", parolaAttivazione.isChecked)
                 modifica.apply()
