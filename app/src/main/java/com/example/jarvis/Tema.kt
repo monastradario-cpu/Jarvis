@@ -48,6 +48,7 @@ object Tema {
 
     /** Forme del cuore animato. */
     val FORME = listOf(
+        "nucleo3d" to "Nucleo 3D: sfera di energia con profondità, riflessi e anello in orbita",
         "sfera" to "Sfera luminosa",
         "anelli" to "Nucleo ad anelli",
         "onda" to "Onda vocale: barre che danzano con la voce",

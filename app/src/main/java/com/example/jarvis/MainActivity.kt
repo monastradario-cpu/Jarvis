@@ -197,6 +197,12 @@ class MainActivity : Activity(), Cervello.Uscita {
         cervello = Cervello.prendi(this)
         prefs = cervello.prefs
         tema = Tema.attuale(prefs)
+        // Una volta sola: il nuovo Nucleo 3D diventa la forma del cuore (si torna indietro da ASPETTO)
+        if (!prefs.getBoolean("nucleo3d_proposto", false)) {
+            val e = prefs.edit().putBoolean("nucleo3d_proposto", true)
+            if (Build.VERSION.SDK_INT >= 33 && Nucleo3D.disponibile) e.putString("forma", "nucleo3d")
+            e.apply()
+        }
         window.statusBarColor = tema.sfondo
         window.navigationBarColor = tema.sfondo
         costruisciInterfaccia()

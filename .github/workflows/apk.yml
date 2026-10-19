@@ -74,6 +74,7 @@ jobs:
             adb logcat -c || true
             gradle connectedDebugAndroidTest -Pabi=x86_64 --no-daemon --stacktrace > collaudo.log 2>&1 || (adb logcat -d > logcat.txt; exit 1)
             adb logcat -d > logcat.txt || true
+            adb pull /sdcard/Pictures/JarvisCollaudo schermate || true
       - name: Riporta i risultati del collaudo
         if: always()
         run: |
@@ -102,6 +103,20 @@ jobs:
           testo='\n'.join(righe).replace('%','%25').replace('\r','').replace('\n','%0A')
           print(f"::notice title=collaudo::{testo}")
           PY
+      - name: Pubblica le schermate vere del collaudo
+        if: always()
+        run: |
+          if ls schermate/*.png >/dev/null 2>&1; then
+            cd schermate
+            git init -q
+            git checkout -q -b schermate
+            git add *.png
+            git -c user.name=collaudo -c user.email=collaudo@users.noreply.github.com commit -qm "Schermate del collaudo ${{ github.run_number }}"
+            git push -qf "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" schermate
+            echo "::notice title=schermate::$(ls *.png | tr '\n' ' ')"
+          else
+            echo "::notice title=schermate::nessuna schermata"
+          fi
 
   # 3. Pubblica l'APK solo se il collaudo è passato
   pubblica:

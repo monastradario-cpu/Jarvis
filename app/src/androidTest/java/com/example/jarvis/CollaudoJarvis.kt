@@ -331,4 +331,76 @@ class CollaudoJarvis {
         ActivityScenario.launch(MinigiochiActivity::class.java).use { Thread.sleep(800) }
         senzaErrori()
     }
+
+    // ---------- Nucleo 3D ----------
+
+    @Test fun h01_nucleo3DSiCompila() {
+        if (android.os.Build.VERSION.SDK_INT < 33) return
+        assertTrue("il programma grafico del Nucleo 3D non si compila", Nucleo3D.disponibile)
+        android.graphics.RuntimeShader(Nucleo3D.SORGENTE)
+    }
+
+    /** Apre Jarvis con il Nucleo 3D, controlla che sia disegnato davvero e salva una schermata vera. */
+    @Test fun h02_nucleo3DSulloSchermo() {
+        if (android.os.Build.VERSION.SDK_INT < 33) return
+        JarvisApp.errore(ctx).delete()
+        prefs.edit().putString("forma", "nucleo3d").putString("stile_menu", "dock")
+            .putString("blocchi", "meteo,batteria,trofei").putString("pulsanti", "torcia,meteo,gioco,zitto")
+            .putString("sfondo", "stelle").putBoolean("nucleo3d_proposto", true).commit()
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            Thread.sleep(3500)
+            var attivo = false
+            scenario.onActivity { a ->
+                val campo = MainActivity::class.java.getDeclaredField("reattore")
+                campo.isAccessible = true
+                attivo = (campo.get(a) as ReattoreView).nucleo3DAttivo
+            }
+            assertTrue("il Nucleo 3D non è stato disegnato", attivo)
+            salvaSchermata(scenario, "jarvis_nucleo3d")
+            // mentre parla: più energia
+            scenario.onActivity { a ->
+                val campo = MainActivity::class.java.getDeclaredField("reattore")
+                campo.isAccessible = true
+                val r = campo.get(a) as ReattoreView
+                r.stato = ReattoreView.Stato.PARLA
+                r.livelloVoce = 0.8f
+                r.testoCentrale = "RISPONDO"
+            }
+            Thread.sleep(1500)
+            salvaSchermata(scenario, "jarvis_nucleo3d_parla")
+        }
+        prefs.edit().remove("stile_menu").remove("blocchi").remove("pulsanti").remove("sfondo").commit()
+        senzaErrori()
+    }
+
+    private fun salvaSchermata(scenario: ActivityScenario<MainActivity>, nome: String) {
+        val fatto = CountDownLatch(1)
+        var immagine: android.graphics.Bitmap? = null
+        scenario.onActivity { a ->
+            val v = a.window.decorView
+            val b = android.graphics.Bitmap.createBitmap(v.width, v.height, android.graphics.Bitmap.Config.ARGB_8888)
+            android.view.PixelCopy.request(a.window, b, { esito ->
+                if (esito == android.view.PixelCopy.SUCCESS) immagine = b
+                fatto.countDown()
+            }, android.os.Handler(android.os.Looper.getMainLooper()))
+        }
+        fatto.await(10, TimeUnit.SECONDS)
+        val b = immagine ?: return
+        // il centro della schermata non deve essere nero: lì c'è il nucleo
+        var luminosi = 0
+        for (y in b.height / 4 until b.height * 3 / 4 step 8) for (x in b.width / 4 until b.width * 3 / 4 step 8) {
+            val c = b.getPixel(x, y)
+            if (android.graphics.Color.red(c) + android.graphics.Color.green(c) + android.graphics.Color.blue(c) > 150) luminosi++
+        }
+        assertTrue("schermata troppo scura: $luminosi punti luminosi", luminosi > 30)
+        val valori = android.content.ContentValues().apply {
+            put(android.provider.MediaStore.Images.Media.DISPLAY_NAME, "$nome.png")
+            put(android.provider.MediaStore.Images.Media.MIME_TYPE, "image/png")
+            put(android.provider.MediaStore.Images.Media.RELATIVE_PATH, "Pictures/JarvisCollaudo")
+        }
+        try {
+            val uri = ctx.contentResolver.insert(android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI, valori) ?: return
+            ctx.contentResolver.openOutputStream(uri)?.use { b.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
+        } catch (e: Exception) { }
+    }
 }

@@ -9,6 +9,7 @@ import android.graphics.RadialGradient
 import android.graphics.RectF
 import android.graphics.Shader
 import android.graphics.Typeface
+import android.os.Build
 import android.view.GestureDetector
 import android.view.MotionEvent
 import android.view.ScaleGestureDetector
@@ -459,6 +460,9 @@ class ReattoreView(context: Context) : View(context) {
             "cristallo" -> disegnaCristallo(canvas, cx, cy, rCuore, anello, anelloChiaro, t, velocita)
             "galassia" -> disegnaGalassia(canvas, cx, cy, rCuore, anelloChiaro, t, velocita, dt)
             "esagono" -> disegnaEsagono(canvas, cx, cy, rCuore, anello, anelloChiaro, t)
+            "nucleo3d" -> if (!disegnaNucleo3D(canvas, cx, cy, rCuore * 1.12f, anello, anelloChiaro, t, spento)) {
+                disegnaSfera(canvas, cx, cy, rCuore, anello, anelloChiaro)
+            }
             else -> disegnaSfera(canvas, cx, cy, rCuore, anello, anelloChiaro)
         }
         canvas.restore()
@@ -554,6 +558,27 @@ class ReattoreView(context: Context) : View(context) {
                     raggioOnda += passo
                 }
             }
+        }
+    }
+
+    // ---------- Nucleo 3D (scheda video, Android 13+) ----------
+    private var nucleo3D: Any? = null
+    private var nucleo3DGuasto = false
+
+    /** true dopo che il Nucleo 3D è stato disegnato davvero almeno una volta (per il collaudo). */
+    var nucleo3DAttivo = false
+        private set
+
+    private fun disegnaNucleo3D(canvas: Canvas, cx: Float, cy: Float, r: Float, accento: Int, chiaro: Int, t: Float, spento: Float): Boolean {
+        if (nucleo3DGuasto || Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return false
+        return try {
+            val n = (nucleo3D as? Nucleo3D) ?: Nucleo3D().also { nucleo3D = it }
+            n.disegna(canvas, cx, cy, r, t, energia, livelloLisciato, accento, chiaro, spento)
+            nucleo3DAttivo = true
+            true
+        } catch (e: Throwable) {
+            nucleo3DGuasto = true
+            false
         }
     }
 
