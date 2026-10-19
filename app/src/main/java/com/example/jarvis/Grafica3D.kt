@@ -154,8 +154,8 @@ float3 guscio(float2 uv, float R, float celle, float semi, float giro, float inc
         float zz = k == 0 ? z : -z;
         float3 n = float3(uv.x, -uv.y, zz) / R;
         float3 q = giraY(giraX(n, incl), giro);
-        float l = linee(q, celle, 0.17, semi);
-        float frammenti = smoothstep(0.35, 0.6, rumore(q * 3.0 + float3(semi, tempo * 0.15, 0.0)));
+        float l = linee(q, celle, 0.09, semi);
+        float frammenti = smoothstep(0.42, 0.62, rumore(q * 3.0 + float3(semi, tempo * 0.15, 0.0))) * (1.0 - smoothstep(0.8, 0.95, abs(q.y)));
         float fasce = banda > 0.0 ? smoothstep(banda, banda + 0.15, abs(q.y)) : 1.0;
         float bordo = 0.6 + 0.4 * pow(1.0 - abs(zz) / R, 2.0);
         float peso = k == 0 ? 1.0 : 0.35;
@@ -172,10 +172,10 @@ half4 main(float2 punto) {
     float f = forza();
     float3 tinta = mix(a, c2, 0.55);
     float3 luce = float3(0.0);
-    luce += guscio(uv, 1.25, 22.0, 1.0, tempo * 0.12, 0.25, 0.55, tinta) * 0.9;
-    luce += guscio(uv, 1.0, 18.0, 2.0, -tempo * 0.2, 0.5, 0.0, tinta);
-    luce += guscio(uv, 0.72, 16.0, 3.0, tempo * 0.32, -0.3, 0.0, tinta) * 0.9;
-    luce += guscio(uv, 0.45, 14.0, 4.0, -tempo * 0.5, 0.8, 0.0, c2) * (0.8 + 0.5 * f);
+    luce += guscio(uv, 1.25, 44.0, 1.0, tempo * 0.12, 0.25, 0.55, tinta) * 0.9;
+    luce += guscio(uv, 1.0, 38.0, 2.0, -tempo * 0.2, 0.5, 0.0, tinta);
+    luce += guscio(uv, 0.72, 30.0, 3.0, tempo * 0.32, -0.3, 0.0, tinta) * 0.9;
+    luce += guscio(uv, 0.45, 22.0, 4.0, -tempo * 0.5, 0.8, 0.0, c2) * (0.8 + 0.5 * f);
     float2 r2 = gira2(uv, -0.08);
     float2 e = float2(r2.x, r2.y / 0.12);
     float an = (1.0 - smoothstep(0.0, 0.05, abs(length(e) - 1.12))) * (0.6 + 0.4 * f);
@@ -185,8 +185,8 @@ half4 main(float2 punto) {
     float scia = (1.0 - smoothstep(0.0, 0.018, length(uv - dir * t2))) * (0.5 + 0.5 * sin(tempo * 1.5));
     luce += c2 * scia * (0.6 + 0.6 * f);
     luce += c2 * exp(-d * 7.0) * (0.25 + 0.9 * voce + 0.3 * energia);
-    luce *= 0.85 + 0.3 * f;
-    float4 alo = bagliore(d / 1.25, a, 0.12 + 0.18 * f);
+    luce *= 1.3 + 0.45 * f;
+    float4 alo = bagliore(d / 1.25, a, 0.05 + 0.08 * f);
     float al = clamp(max(luce.r, max(luce.g, luce.b)), 0.0, 1.0);
     float4 colore = sopra(float4(min(luce, float3(al)), al), alo);
     return finale(colore);
