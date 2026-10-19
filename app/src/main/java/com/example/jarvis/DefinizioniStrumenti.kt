@@ -352,6 +352,12 @@ object DefinizioniStrumenti {
                 ), listOf("documento", "domanda")),
             strumento("archivio_elimina", "Toglie un documento dall'archivio.",
                 listOf(p("documento", "string", "Nome del documento")), listOf("documento")),
+            strumento("cambia_voce", "Cambia la voce di Jarvis, la velocità o il tono quando l'utente lo chiede.",
+                listOf(
+                    p("voce", "string", "miro, paola, riccardo, dii, maschile, femminile, telefono, oppure prossima per cambiarla; vuoto se non cambia"),
+                    p("velocita", "string", "più veloce, più lenta oppure normale; vuoto se non cambia"),
+                    p("tono", "string", "più grave, più acuto oppure normale; vuoto se non cambia")
+                )),
             strumento("conferma_azione",
                 "Comunica la risposta dell'utente a un'azione in attesa di conferma (apertura di un'app, cancellazioni).",
                 listOf(p("risposta", "string", "sì se l'utente ha confermato, no se ha rifiutato")), listOf("risposta"))

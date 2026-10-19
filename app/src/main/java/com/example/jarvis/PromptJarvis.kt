@@ -187,6 +187,7 @@ class PromptJarvis(private val c: Cervello) {
         if (pluginAttivo("liste")) p.append("- Per la lista della spesa e altre liste usa lista_aggiungi, lista_leggi, lista_togli e lista_invia.\n")
         if (pluginAttivo("traduttore")) p.append("- Se l'utente deve parlare con qualcuno in un'altra lingua, apri il traduttore simultaneo con traduttore.\n")
         p.append("- Se l'utente chiede di non ricordare questa conversazione, usa modalita_privata.\n")
+        p.append("- Se l'utente vuole un'altra voce, una voce maschile o femminile, Miro, Paola, Riccardo o Dii, o che parli più veloce, più lento, più grave o più acuto, usa cambia_voce: non dire di averla cambiata senza usarlo.\n")
         if (pluginAttivo("archivio")) {
             val documenti = Archivio.numero(ctx)
             p.append("- L'utente può caricare foto e documenti con il tasto + accanto al campo di testo. ")

@@ -16,8 +16,12 @@ android {
         versionName = "1." + (System.getenv("GITHUB_RUN_NUMBER") ?: "0")
 
         // Solo i processori dei telefoni moderni: l'app pesa meno
+        // Collaudo automatico sul telefono simulato
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
         ndk {
-            abiFilters += listOf("arm64-v8a")
+            // per il collaudo sull'emulatore si costruisce anche x86_64 (-Pabi=x86_64)
+            abiFilters += ((project.findProperty("abi") as String?)?.split(",") ?: listOf("arm64-v8a"))
         }
     }
 
@@ -76,6 +80,13 @@ dependencies {
     // Voce neurale offline (Piper tramite sherpa-onnx): l'AAR viene scaricato durante la costruzione
     implementation(files("libs/sherpa-onnx.aar"))
     implementation("org.apache.commons:commons-compress:1.26.2")
+
+    // Collaudo automatico
+    androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("androidx.test:rules:1.6.1")
+    androidTestImplementation("androidx.test:core:1.6.1")
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
+    androidTestImplementation("junit:junit:4.13.2")
 
     // Email (IMAP e SMTP)
     implementation("com.sun.mail:android-mail:1.6.7")

@@ -886,6 +886,7 @@ class Cervello private constructor(private val ctx: Context) {
             "guarda" -> guarda(a.optString("domanda"))
             "riepilogo_giornata" -> riepilogoGiornata()
             "cerca_ricordi" -> cercaRicordi(a.optString("testo"))
+            "cambia_voce" -> Voce.cambia(ctx, prefs, a.optString("voce"), a.optString("velocita"), a.optString("tono"))
             "non_disturbare" -> suUi { Sistema.nonDisturbare(lanciatore(), a.optBoolean("attiva", true)) }
             "suoneria" -> suUi { Sistema.suoneria(lanciatore(), a.optString("modalita")) }
             "luminosita" -> suUi { Sistema.luminosita(lanciatore(), a.optString("valore")) }

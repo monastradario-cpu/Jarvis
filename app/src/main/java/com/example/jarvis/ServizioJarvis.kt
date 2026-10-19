@@ -113,6 +113,7 @@ class ServizioJarvis : Service() {
                 tts?.let { Voce.applica(it, cervello.prefs) }
                 tts?.setOnUtteranceProgressListener(ascoltatoreVoce)
                 parlatore.tts = tts
+                if (Voce.ttsAttivo == null) Voce.ttsAttivo = tts
             }
         }
         parlatore.ascoltatore = ascoltatoreVoce

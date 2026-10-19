@@ -181,6 +181,7 @@ class MainActivity : Activity(), Cervello.Uscita {
             if (esito == TextToSpeech.SUCCESS) {
                 tts?.let { Voce.applica(it, prefs) }
                 parlatore.tts = tts
+                Voce.ttsAttivo = tts
                 tts?.setOnUtteranceProgressListener(ascoltoVoce)
             }
         }
@@ -782,10 +783,22 @@ class MainActivity : Activity(), Cervello.Uscita {
                 check(bottoni[indice].id)
             }
             contenitore.addView(gruppo)
-            return {
+            val leggi: () -> String = {
                 val indice = bottoni.indexOfFirst { it.id == gruppo.checkedRadioButtonId }.coerceAtLeast(0)
                 opzioni[indice].first
             }
+            selettori[leggi] = { valore ->
+                val i = opzioni.indexOfFirst { it.first == valore }
+                if (i >= 0) gruppo.check(bottoni[i].id)
+            }
+            return leggi
+        }
+
+        private val selettori = HashMap<Any, (String) -> Unit>()
+
+        /** Cambia la scelta mostrata (per esempio quando un'altra azione della pagina la modifica). */
+        fun seleziona(scelta: () -> String, valore: String) {
+            selettori[scelta]?.invoke(valore)
         }
 
         fun mostra(alSalvare: (() -> Unit)? = null) {
@@ -990,6 +1003,7 @@ class MainActivity : Activity(), Cervello.Uscita {
                 .setItems(nomi) { _, i ->
                     val v = voci[i]
                     prefs.edit().putString("voce_neurale", v.id).putString("motore_voce", "neurale").apply()
+                    pagina.seleziona(motore, "neurale")
                     scriviNeurale()
                     if (VoceNeurale.scaricata(this, v.id)) {
                         parla("Buongiorno. Sono ${cervello.nomeAssistente()}, a sua disposizione.")
@@ -1023,7 +1037,8 @@ class MainActivity : Activity(), Cervello.Uscita {
             AlertDialog.Builder(this)
                 .setTitle("Tocca una voce per sentirla")
                 .setItems(nomi) { _, i ->
-                    prefs.edit().putString("voce_nome", elenco[i].name).apply()
+                    prefs.edit().putString("voce_nome", elenco[i].name).putString("motore_voce", "android").apply()
+                    pagina.seleziona(motore, "android")
                     aggiornaNomeVoce()
                     prova()
                 }

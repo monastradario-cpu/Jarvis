@@ -162,6 +162,23 @@ object ComandiRapidi {
             return fatto(esegui) { c.prendiNota(m.groupValues[1].replaceFirstChar { it.titlecase(IT) }) }
         }
 
+        // ---------- voce ----------
+        Regex("^(?:cambia(?: la)? voce|usa un'altra voce|un'altra voce|cambia voce per favore)$").find(t)?.let {
+            return fatto(esegui) { Voce.cambia(ctx, c.prefs, "prossima", "", "") }
+        }
+        Regex("^(?:(?:usa|metti|voglio|parla con|passa alla|passa a) )?(?:la )?voce (?:di |della |del )?(miro|paola|riccardo|dii|maschile|femminile|da uomo|da donna|del telefono|di google|normale)$").find(t)?.let { m ->
+            return fatto(esegui) { Voce.cambia(ctx, c.prefs, m.groupValues[1], "", "") }
+        }
+        Regex("^(?:usa|metti|parla con) (miro|paola|riccardo|dii)$").find(t)?.let { m ->
+            return fatto(esegui) { Voce.cambia(ctx, c.prefs, m.groupValues[1], "", "") }
+        }
+        Regex("^parla (?:più |un po' più )?(lentamente|piano|lento|veloce|velocemente|in fretta|normale)$").find(t)?.let { m ->
+            return fatto(esegui) { Voce.cambia(ctx, c.prefs, "", m.groupValues[1].replace("in fretta", "veloce"), "") }
+        }
+        Regex("^(?:usa una )?voce (?:più )?(grave|bassa|profonda|acuta|alta)$").find(t)?.let { m ->
+            return fatto(esegui) { Voce.cambia(ctx, c.prefs, "", "", m.groupValues[1]) }
+        }
+
         // ---------- cortesie: niente IA per un grazie o un saluto ----------
         if (Regex("^(grazie( mille| tante| jarvis)?|ti ringrazio|perfetto,? grazie|ok,? grazie|va bene,? grazie)$").matches(t)) {
             return listOf("Prego.", "A sua disposizione.", "Di nulla.", "È un piacere.").random()
