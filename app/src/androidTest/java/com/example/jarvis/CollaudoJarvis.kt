@@ -374,7 +374,7 @@ class CollaudoJarvis {
         JarvisApp.errore(ctx).delete()
         prefs.edit().putString("forma", "3d_nucleo").remove("stile_menu").remove("blocchi").remove("pulsanti")
             .putString("sfondo", "stelle").putString("tema", "oro").putInt("r_tonalita", -1)
-            .putInt("3d_dimensione", 140).putBoolean("nucleo3d_proposto", true).commit()
+            .putInt("3d_dimensione", 140).putBoolean("nucleo3d_proposto", true).putBoolean("configurato", true).putBoolean("versione_definitiva", true).commit()
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             Thread.sleep(3000)
             for ((id, _, _) in Grafica3D.MODELLI) {
@@ -407,7 +407,7 @@ class CollaudoJarvis {
                 val m = MainActivity::class.java.getDeclaredMethod("mostraPersonalizza", String::class.java,
                     Map::class.java, Int::class.javaPrimitiveType)
                 m.isAccessible = true
-                m.invoke(a, "3d", null, 0)
+                m.invoke(a, "aspetto", null, 0)
             }
             Thread.sleep(1500)
             salvaSchermata(scenario, "pannello_3d")
