@@ -43,6 +43,101 @@ class Memoria(private val c: Cervello) {
     private fun chiamaSemplice(richiesta: String, maxToken: Int): String = c.chiamaSemplice(richiesta, maxToken)
     private fun conversazioneRecente(): String = c.conversazioneRecente()
 
+    // ================================================================
+    //  FASE OFFLINE: si impara senza IA di giorno, si elabora tutto insieme di notte
+    // ================================================================
+
+    /** Conversazioni vecchie da riassumere stanotte. */
+    fun daRiassumereAggiungi(testo: String) {
+        if (testo.isBlank()) return
+        val attuale = prefs.getString("da_riassumere", "") ?: ""
+        prefs.edit().putString("da_riassumere", (attuale + "\n" + testo).takeLast(12000)).apply()
+    }
+
+    private val SCHEMI_LOCALI: List<Pair<Regex, (MatchResult) -> String>> = listOf(
+        Regex("\\bmi chiamo ([\\p{L}']{2,20})") to { m -> "L'utente si chiama ${m.groupValues[1].replaceFirstChar { it.titlecase() }}" },
+        Regex("\\b(mia|mio) (moglie|marito|figlia|figlio|madre|mamma|padre|papà|sorella|fratello|compagna|compagno|fidanzata|fidanzato|cane|gatta|gatto|capo|nonna|nonno|migliore amica|migliore amico) si chiama ([\\p{L}']{2,20})") to
+            { m -> "${m.groupValues[2].replaceFirstChar { it.titlecase() }} dell'utente: ${m.groupValues[3].replaceFirstChar { it.titlecase() }}" },
+        Regex("\\b(?:abito|vivo) (?:a|ad|in) ([\\p{L}' ]{2,30}?)(?:[,.!]|$| e | da | con )") to { m -> "Vive a ${m.groupValues[1].trim().replaceFirstChar { it.titlecase() }}" },
+        Regex("\\blavoro (come|da|presso|in|per) ([\\p{L}' ]{2,40}?)(?:[,.!]|$| e )") to { m -> "Lavora ${m.groupValues[1]} ${m.groupValues[2].trim()}" },
+        Regex("\\b(?:sono nato|sono nata|il mio compleanno è) il (\\d{1,2} [\\p{L}]+)") to { m -> "Compleanno dell'utente: ${m.groupValues[1]}" },
+        Regex("\\btifo (?:per )?(?:la |il |l')?([\\p{L}' ]{3,25}?)(?:[,.!]|$| e )") to { m -> "Tifa per ${m.groupValues[1].trim().replaceFirstChar { it.titlecase() }}" },
+        Regex("\\bpreferisco ([\\p{L}' ]{3,40}?)(?:[,.!]|$)") to { m -> "Preferisce ${m.groupValues[1].trim()}" },
+        Regex("\\b(?:non mi piace|non mi piacciono|odio) ([\\p{L}' ]{3,40}?)(?:[,.!]|$)") to { m -> "Non gli piace: ${m.groupValues[1].trim()}" },
+        Regex("\\bsono (?:allergico|allergica) (?:a|al|alla|ai|alle) ([\\p{L}' ]{3,30}?)(?:[,.!]|$)") to { m -> "Allergia: ${m.groupValues[1].trim()}" }
+    )
+
+    /** Impara senza IA i fatti che l'utente dice di sé. Restituisce cosa ha imparato. */
+    fun imparaLocale(testo: String): List<String> {
+        val t = testo.lowercase(java.util.Locale.ITALIAN)
+        if (t.contains("?")) return emptyList()               // le domande non sono fatti
+        val imparati = mutableListOf<String>()
+        for ((schema, fatto) in SCHEMI_LOCALI) {
+            val m = schema.find(t) ?: continue
+            val voce = fatto(m)
+            if (ricorda(voce) == "Memorizzato.") imparati.add(voce)
+        }
+        return imparati
+    }
+
+    /**
+     * La riflessione notturna: con UNA sola richiesta riassume le conversazioni del giorno
+     * e impara ricordi, lezioni e routine dalle richieste fatte dall'ultima notte.
+     */
+    fun riflettiNotte(): String {
+        val ultima = prefs.getString("notturna_da", "") ?: ""
+        val diario = leggiDiario()
+        val righe = StringBuilder()
+        var nuove = 0
+        for (i in 0 until diario.length()) {
+            val v = diario.optJSONObject(i) ?: continue
+            if (v.optString("t") <= ultima) continue
+            nuove++
+            val strumenti = v.optJSONArray("s")?.let { s -> (0 until s.length()).joinToString(",") { s.optString(it) } } ?: ""
+            righe.append("${v.optString("t")} | ${v.optString("d")} | ${strumenti.ifBlank { "-" }} | ${v.optString("r").take(150)}\n")
+        }
+        val daRiassumere = prefs.getString("da_riassumere", "") ?: ""
+        if (nuove == 0 && daRiassumere.isBlank()) return "Niente di nuovo da elaborare."
+        val riassunto = prefs.getString("riassunto", "") ?: ""
+        val routine = leggiRoutine()
+        val nomiRoutine = (0 until routine.length()).joinToString(", ") { routine.getJSONObject(it).optString("nome") }
+        val richiesta = "Sei il modulo notturno di auto-miglioramento di Jarvis, un assistente vocale su telefono Android.\n" +
+            "Riassunto attuale delle conversazioni passate: ${riassunto.ifBlank { "(vuoto)" }}\n" +
+            "Cose che Jarvis sa già dell'utente: ${leggiLista("memoria").takeLast(80).joinToString("; ").ifBlank { "niente" }}\n" +
+            "Lezioni già imparate: ${leggiLista("lezioni").joinToString("; ").ifBlank { "nessuna" }}\n" +
+            "Routine esistenti: ${nomiRoutine.ifBlank { "nessuna" }}\n\n" +
+            "Richieste dall'ultima elaborazione (data | richiesta | strumenti | risposta):\n${righe.toString().takeLast(9000)}\n" +
+            (if (daRiassumere.isNotBlank()) "Conversazioni vecchie da aggiungere al riassunto:\n${daRiassumere.takeLast(8000)}\n\n" else "") +
+            "Rispondi SOLO con un JSON valido in questo formato:\n" +
+            "{\"riassunto\": \"riassunto aggiornato, al massimo 1000 caratteri: interessi, cose richieste spesso, cose in sospeso, preferenze\", " +
+            "\"ricordi\": [\"fatti stabili e nuovi detti dall'utente\"], " +
+            "\"lezioni\": [\"regole pratiche per rispondere meglio\"], " +
+            "\"routine\": [{\"nome\": \"...\", \"frase\": \"frase che l'utente dirà\", \"istruzioni\": \"cosa fare\"}]}\n" +
+            "Regole: al massimo 5 ricordi e 3 lezioni; niente che sia già presente; una routine solo se l'utente ha ripetuto la stessa " +
+            "sequenza almeno 3 volte; liste vuote se non c'è niente di nuovo; non dedurre dati sensibili; mai password, codici o dati bancari."
+        val risposta = chiamaSemplice(richiesta, 1500)
+        val da = risposta.indexOf('{')
+        val a = risposta.lastIndexOf('}')
+        if (da < 0 || a <= da) return "Risposta non valida."
+        val json = org.json.JSONObject(risposta.substring(da, a + 1))
+        val imparato = mutableListOf<String>()
+        json.optString("riassunto").takeIf { it.isNotBlank() }?.let { prefs.edit().putString("riassunto", it.take(1500)).apply() }
+        json.optJSONArray("ricordi")?.let { l -> for (i in 0 until minOf(l.length(), 5)) if (aggiungiSenzaDoppioni("memoria", l.optString(i), Cervello.MAX_RICORDI)) imparato.add(l.optString(i)) }
+        json.optJSONArray("lezioni")?.let { l -> for (i in 0 until minOf(l.length(), 3)) if (aggiungiSenzaDoppioni("lezioni", l.optString(i), Cervello.MAX_LEZIONI)) imparato.add(l.optString(i)) }
+        json.optJSONArray("routine")?.let { l ->
+            for (i in 0 until minOf(l.length(), 2)) {
+                val r = l.optJSONObject(i) ?: continue
+                val nome = r.optString("nome")
+                val esiste = (0 until routine.length()).any { routine.getJSONObject(it).optString("nome").equals(nome, true) }
+                if (nome.isNotBlank() && !esiste) { creaRoutine(nome, r.optString("frase"), r.optString("istruzioni")); imparato.add("routine $nome") }
+            }
+        }
+        val ultimaData = (diario.optJSONObject(diario.length() - 1)?.optString("t")) ?: ultima
+        prefs.edit().putString("notturna_da", ultimaData).putString("da_riassumere", "").apply()
+        if (imparato.isNotEmpty()) prefs.edit().putString("notturna_imparato", imparato.joinToString("; ")).apply()
+        return if (imparato.isEmpty()) "Riassunto aggiornato." else "Imparato: " + imparato.joinToString("; ")
+    }
+
     internal fun leggiFile(nome: String): String? = try {
         val file = File(ctx.filesDir, nome)
         if (file.exists()) file.readText() else null

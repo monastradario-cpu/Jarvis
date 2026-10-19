@@ -102,6 +102,8 @@ object Statistiche {
         if (g.optLong("offline") > 0) t.append(", offline ${g.optLong("offline")}")
         if (g.optLong("errore") > 0) t.append(", errori ${g.optLong("errore")}")
         t.append(")\n")
+        val risparmiateOggi = g.optLong("rapida") + g.optLong("offline")
+        if (g.optLong("richieste") > 0) t.append("Richieste all'IA evitate oggi: $risparmiateOggi su ${g.optLong("richieste")}\n")
         if (g.optLong("attivazioni") > 0) t.append("Attivazioni con \"Ehi Jarvis\": ${g.optLong("attivazioni")}\n")
         if (g.optLong("ia") > 0) t.append("Tempo medio di risposta dell'IA: ${"%.1f".format(Locale.ITALIAN, g.optLong("ms_ia") / 1000.0 / g.optLong("ia"))} s\n")
         if (g.optLong("rapida") > 0) t.append("Comandi istantanei: ${g.optLong("ms_rapida") / g.optLong("rapida").coerceAtLeast(1)} ms in media\n")
@@ -134,7 +136,11 @@ object Statistiche {
             risparmiate += x.optLong("rapida") + x.optLong("offline")
         }
         t.append("\nIN TOTALE\n")
+        var notturne = 0L
+        var ia = 0L
+        for (k in giorni.keys()) giorni.optJSONObject(k)?.let { notturne += it.optLong("notturna"); ia += it.optLong("ia") }
         t.append("$totale richieste dal ${dati.optString("inizio", oggiChiave)}; $rapide fatte all'istante senza usare l'IA.\n")
+        t.append("Richieste all'IA: $ia, più $notturne elaborazioni notturne (riassunto, apprendimento, archivio).\n")
 
         val strumenti = dati.optJSONObject("strumenti")
         if (strumenti != null && strumenti.length() > 0) {

@@ -62,6 +62,7 @@ object Proattivo {
         if (!attivo(ctx)) return
         try { appuntamenti(ctx) } catch (e: Exception) { }
         try { resoconto(ctx) } catch (e: Exception) { }
+        try { FaseNotturna.esegui(ctx) } catch (e: Exception) { }
         try { Aggiornamenti.controllaInBackground(ctx) } catch (e: Exception) { }
         try {
             // batteria per le automazioni, anche quando Jarvis non è sempre attivo

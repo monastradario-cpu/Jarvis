@@ -206,9 +206,11 @@ class ChiediAJarvis : Activity() {
         stato.text = "Lo conservo nell'archivio..."
         Thread {
             val esito = try {
-                val cervello = Cervello.prendi(this)
-                Archivio.salva(this, c, cervello.riassuntoPerArchivio(c))
-                "Salvato nell'archivio: potrai chiedermelo quando vuoi."
+                if (ultimaRisposta.isNotBlank()) Archivio.archiviaCaricato(this, c, "contenuto condiviso", ultimaRisposta)
+                else {
+                    Archivio.salva(this, c, Cervello.prendi(this).riassuntoPerArchivio(c))
+                    "Salvato nell'archivio: potrai chiedermelo quando vuoi."
+                }
             } catch (e: Exception) {
                 "Non sono riuscito a salvarlo: ${e.message}"
             }

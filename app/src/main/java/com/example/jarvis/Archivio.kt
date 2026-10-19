@@ -59,6 +59,48 @@ object Archivio {
         return id
     }
 
+    // ---------- riassunti rimandati alla fase notturna ----------
+
+    fun inAttesa(ctx: Context): List<Int> =
+        (prefs(ctx).getString("archivio_in_attesa", "") ?: "").split(",").mapNotNull { it.trim().toIntOrNull() }
+
+    fun segnaInAttesa(ctx: Context, id: Int) {
+        val l = (inAttesa(ctx) + id).distinct()
+        prefs(ctx).edit().putString("archivio_in_attesa", l.joinToString(",")).apply()
+    }
+
+    fun perId(ctx: Context, id: Int): JSONObject? {
+        val e = elenco(ctx)
+        for (i in 0 until e.length()) if (e.getJSONObject(i).optInt("id") == id) return e.getJSONObject(i)
+        return null
+    }
+
+    fun aggiornaRiassunto(ctx: Context, id: Int, riassunto: String) {
+        val e = elenco(ctx)
+        for (i in 0 until e.length()) {
+            val v = e.getJSONObject(i)
+            if (v.optInt("id") == id && riassunto.isNotBlank()) v.put("riassunto", riassunto.take(1500))
+        }
+        salvaElenco(ctx, e)
+        prefs(ctx).edit().putString("archivio_in_attesa", inAttesa(ctx).filter { it != id }.joinToString(",")).apply()
+    }
+
+    /**
+     * Archivia un file caricato. Con il risparmio richieste usa come riassunto provvisorio la prima risposta
+     * già ottenuta e rimanda il riassunto vero alla notte; altrimenti lo chiede subito.
+     */
+    fun archiviaCaricato(ctx: Context, c: Cervello.Contenuto, domanda: String, risposta: String): String {
+        val cervello = Cervello.prendi(ctx)
+        return if (cervello.risparmio()) {
+            val id = salva(ctx, c, "Prima domanda: $domanda. Risposta: ${risposta.take(700)}")
+            segnaInAttesa(ctx, id)
+            "${c.titolo} salvato nell'archivio: stanotte preparo il riassunto completo."
+        } else {
+            salva(ctx, c, cervello.riassuntoPerArchivio(c))
+            "${c.titolo} salvato nell'archivio: potrai chiedermelo anche più avanti."
+        }
+    }
+
     fun carica(ctx: Context, v: JSONObject): Cervello.Contenuto? {
         val f = File(cartella(ctx), v.optString("file"))
         if (!f.exists()) return null

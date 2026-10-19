@@ -884,6 +884,10 @@ class MainActivity : Activity(), Cervello.Uscita {
             "Risposte in streaming: inizia a parlare mentre la risposta sta ancora arrivando",
             prefs.getBoolean("streaming", true)
         )
+        pagina.titoloSezione("Risparmio richieste")
+        pagina.nota("Di giorno Jarvis impara da solo, senza IA, e fa i comandi semplici (meteo, promemoria, agenda, notizie, messaggi...) " +
+            "sul telefono. Riassunti, apprendimento e riassunti dei documenti li fa tutti insieme di notte, con pochissime richieste.")
+        val risparmio = pagina.casella("Risparmia richieste: elaborazioni automatiche di notte", prefs.getBoolean("risparmio_richieste", true))
         pagina.titoloSezione("Jarvis proattivo")
         pagina.nota("Ti avvisa da solo: appuntamenti in arrivo (e quando partire), messaggi insistenti, pioggia. Mai a voce di notte.")
         val proattivo = pagina.casella("Avvisi proattivi", prefs.getBoolean("proattivo", true))
@@ -905,6 +909,7 @@ class MainActivity : Activity(), Cervello.Uscita {
                 .putBoolean("proattivo_messaggi", proMessaggi.isChecked)
                 .putBoolean("proattivo_meteo", proMeteo.isChecked)
                 .putBoolean("proattivo_voce", proVoce.isChecked)
+                .putBoolean("risparmio_richieste", risparmio.isChecked)
                 .apply()
             Proattivo.programma(this)
             aggiungiAlRegistro("Jarvis", "Carattere aggiornato.")
@@ -1656,6 +1661,17 @@ class MainActivity : Activity(), Cervello.Uscita {
         val resoconto = pagina.casella("Ogni domenica sera, il resoconto della settimana", prefs.getBoolean("resoconto", true))
         resoconto.setOnCheckedChangeListener { _, v -> prefs.edit().putBoolean("resoconto", v).apply() }
         pagina.bottone("Fammi il resoconto adesso") { gestisciRichiesta("Fammi il resoconto della settimana.") }
+        pagina.titoloSezione("Fase notturna")
+        pagina.nota("Ogni notte (o dalle 23 se il telefono è in carica) Jarvis riassume le conversazioni, impara dalle richieste " +
+            "e completa i riassunti dei documenti, tutto con una o poche richieste.\n" +
+            (prefs.getString("notturna_esito", "")?.takeIf { it.isNotBlank() }?.let { "Ultima volta: $it" } ?: "Non è ancora stata eseguita."))
+        pagina.bottone("Fallo adesso") {
+            aggiungiAlRegistro("Jarvis", "Elaboro la memoria...")
+            Thread {
+                val esito = FaseNotturna.esegui(this, forzata = true)
+                runOnUiThread { aggiungiAlRegistro("Memoria", esito.ifBlank { "Fatto." }) }
+            }.start()
+        }
         pagina.titoloSezione("Archivio dei documenti")
         pagina.nota("${Archivio.numero(this)} documenti. Quando carichi un file con il tasto +, Jarvis lo conserva con un riassunto per le domande future.")
         val archivioAuto = pagina.casella("Conserva automaticamente i file caricati", prefs.getBoolean("archivio_auto", true))
@@ -1851,9 +1867,8 @@ class MainActivity : Activity(), Cervello.Uscita {
                     if (c.titolo in archiviati) continue
                     archiviati.add(c.titolo)
                     try {
-                        val riassunto = cervello.riassuntoPerArchivio(c)
-                        Archivio.salva(this, c, riassunto)
-                        runOnUiThread { aggiungiAlRegistro("Memoria", "${c.titolo} salvato nell'archivio: potrai chiedermelo anche più avanti.") }
+                        val esito = Archivio.archiviaCaricato(this, c, testo, risposta)
+                        runOnUiThread { aggiungiAlRegistro("Memoria", esito) }
                     } catch (e: Exception) { }
                 }
             }

@@ -180,6 +180,12 @@ class Cervello private constructor(private val ctx: Context) {
     /** Chi sta parlando (riconosciuto dalla voce): vuoto per l'utente principale, altrimenti il nome del familiare. */
     @Volatile var chiParla = ""
 
+    /** Risparmio richieste: le elaborazioni automatiche (riassunto, riflessione, archivio) si fanno di notte, tutte insieme. */
+    fun risparmio() = prefs.getBoolean("risparmio_richieste", true)
+
+    /** L'ultima risposta data, per "ripeti". */
+    @Volatile internal var ultimaRisposta = ""
+
     fun nomeAssistente() = (prefs.getString("nome_assistente", "Jarvis") ?: "Jarvis").trim().ifEmpty { "Jarvis" }
 
     internal fun contesto(): Context = ctx
@@ -237,12 +243,21 @@ class Cervello private constructor(private val ctx: Context) {
         if (privata && inizio - ultimaPrivata > 30 * 60_000L) chiudiPrivataSeServe()
         if (privata) ultimaPrivata = inizio
 
-        // 1. Comandi semplici: subito, anche offline e senza chiave
+        // 0. Impara da solo, senza IA, i fatti che l'utente dice di sé ("mi chiamo...", "abito a...")
+        if (!privata) try { memoria.imparaLocale(testo) } catch (e: Exception) { }
+
+        // 1. Comandi semplici, catene di comandi e routine: subito, anche offline e senza chiave
+        var tipoLocale = "rapida"
         val rapida = if (prefs.getBoolean("comandi_rapidi", true)) {
-            try { ComandiRapidi.prova(this, testo) } catch (e: Exception) { null }
+            try {
+                ComandiRapidi.prova(this, testo)
+                    ?: ComandiRapidi.provaCatena(this, testo)?.also { tipoLocale = "catena" }
+                    ?: routineLocale(testo)?.also { tipoLocale = "routine" }
+            } catch (e: Exception) { null }
         } else null
         if (rapida != null) {
-            scriviNelDiario(testo, rapida, "rapida")
+            ultimaRisposta = rapida
+            scriviNelDiario(testo, rapida, tipoLocale)
             registraScambioLocale(testo, rapida)
             chiudiPrivataSeServe()
             salvaConversazioni()
@@ -272,11 +287,27 @@ class Cervello private constructor(private val ctx: Context) {
             pezzoAttuale = null
         }
         val fonti = fontiUltimaRisposta.toList()
+        ultimaRisposta = r
         scriviNelDiario(testo, r)
         chiudiPrivataSeServe()
         salvaConversazioni()
         Statistiche.richiesta(ctx, if (errore) "errore" else "ia", System.currentTimeMillis() - inizio, strumentiUsati)
         Risposta(r, fonti)
+    }
+
+    /** Se la frase è quella di una routine e le sue istruzioni sono tutte comandi semplici, la eseguo senza IA. */
+    private fun routineLocale(testo: String): String? {
+        val t = testo.lowercase(Locale.ITALIAN).trim().trimEnd('.', '!', '?')
+        val routine = memoria.leggiRoutine()
+        for (i in 0 until routine.length()) {
+            val r = routine.getJSONObject(i)
+            val frase = r.optString("frase").lowercase(Locale.ITALIAN).trim().trimEnd('.', '!', '?')
+            if (frase.isNotEmpty() && (t == frase || t == r.optString("nome").lowercase(Locale.ITALIAN))) {
+                return ComandiRapidi.provaCatena(this, r.optString("istruzioni"), tutteObbligatorie = true)
+                    ?.let { "Routine ${r.optString("nome")}: $it" }
+            }
+        }
+        return null
     }
 
     /** Un comando eseguito senza IA entra comunque nella conversazione, così il cervello sa cosa è successo. */
@@ -615,7 +646,10 @@ class Cervello private constructor(private val ctx: Context) {
             if (vecchi.isNotEmpty()) {
                 salvaConversazioni()
                 val testoVecchio = testoDellaConversazione(vecchi)
-                if (conChiave && testoVecchio.isNotBlank()) {
+                if (risparmio()) {
+                    // fase offline: il riassunto si fa stanotte, insieme a tutto il resto, con una sola richiesta
+                    memoria.daRiassumereAggiungi(testoVecchio)
+                } else if (conChiave && testoVecchio.isNotBlank()) {
                     try {
                         aggiornaRiassunto(testoVecchio)
                     } catch (e: Exception) {
@@ -627,7 +661,7 @@ class Cervello private constructor(private val ctx: Context) {
 
         val contatore = prefs.getInt("contatore", 0) + 1
         prefs.edit().putInt("contatore", contatore).apply()
-        if (conChiave && contatore % RIFLESSIONE_OGNI == 0) {
+        if (!risparmio() && conChiave && contatore % RIFLESSIONE_OGNI == 0) {
             try {
                 rifletti()
             } catch (e: Exception) {
