@@ -1051,6 +1051,7 @@ class Cervello private constructor(private val ctx: Context) {
     private fun aggiornaRiassunto(testoNuovo: String) = memoria.aggiornaRiassunto(testoNuovo)
     private fun rifletti() = memoria.rifletti()
     private fun avvia(intento: Intent, messaggioOk: String): String = telefono.avvia(intento, messaggioOk)
+    private fun suUi(azione: () -> String): String = telefono.suUi(azione)
     private fun codifica(testo: String): String = telefono.codifica(testo)
     private fun normalizzaUrl(url: String): String = telefono.normalizzaUrl(url)
     internal fun apriApp(nome: String): String = telefono.apriApp(nome)
