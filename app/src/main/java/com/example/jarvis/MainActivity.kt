@@ -43,6 +43,12 @@ import android.widget.Button
 import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.FrameLayout
+import android.widget.HorizontalScrollView
+import android.widget.ImageView
+import android.widget.Toast
+import android.graphics.BitmapFactory
+import android.graphics.RenderEffect
+import android.graphics.Shader
 import android.widget.LinearLayout
 import android.widget.RadioButton
 import android.widget.RadioGroup
@@ -94,6 +100,28 @@ class MainActivity : Activity(), Cervello.Uscita {
     private lateinit var infoHud: TextView
     private lateinit var contenitoreSfera: FrameLayout
 
+    // Personalizzazione: sfondo con foto, blocchi, pulsanti rapidi, dock, gioco in corso
+    private lateinit var fondo: FrameLayout
+    private lateinit var fotoSfondo: ImageView
+    private lateinit var veloSfondo: View
+    private lateinit var scorriSopra: HorizontalScrollView
+    private lateinit var scorriSotto: HorizontalScrollView
+    private lateinit var blocchiSopra: LinearLayout
+    private lateinit var blocchiSotto: LinearLayout
+    private lateinit var scorriPulsanti: HorizontalScrollView
+    private lateinit var rigaPulsanti: LinearLayout
+    private lateinit var dock: LinearLayout
+    private lateinit var rigaGioco: TextView
+    private var pannello: PannelloPersonalizza? = null
+    private var barraAnteprima: View? = null
+    private var sensori: SensoriJarvis? = null
+    private var torciaAccesa = false
+    private var fotoCaricata = ""
+    @Volatile private var meteoBreve = ""
+    @Volatile private var meteoQuando = 0L
+    @Volatile private var agendaBreve = ""
+    @Volatile private var agendaQuando = 0L
+
     // Sottotitoli: ultima domanda, ultima risposta e note
     private var ultimaDomanda = ""
     private var ultimaRisposta = ""
@@ -102,7 +130,19 @@ class MainActivity : Activity(), Cervello.Uscita {
     private val aggiornaHud = object : Runnable {
         override fun run() {
             scriviInfoHud()
+            if (!reattore.dorme) reattore.umore = Umore.attuale(this@MainActivity)
+            if (Personalizza.blocchi(prefs).isNotEmpty()) riempiBlocchi()
             reattore.postDelayed(this, 20_000)
+        }
+    }
+
+    /** Un ticchettio leggero mentre Jarvis pensa (se acceso in SUONI). */
+    private val ticchettio = object : Runnable {
+        override fun run() {
+            if (occupato && risposteParziale.isEmpty()) {
+                Suoni.ticchettio(this@MainActivity)
+                reattore.postDelayed(this, 650)
+            }
         }
     }
 
@@ -165,6 +205,7 @@ class MainActivity : Activity(), Cervello.Uscita {
             alTermine = { domanda ->
                 parlando = false
                 aggiornaMic()
+                Suoni.fineRisposta(this)
                 // Conversazione continua: Jarvis ha fatto una domanda, ascolto la risposta
                 if (domanda && visibile && !inAscolto && !occupato && prefs.getBoolean("dialogo_continuo", true)) {
                     reattore.postDelayed({ if (!inAscolto && !occupato) iniziaAscolto() }, 350)
@@ -192,7 +233,24 @@ class MainActivity : Activity(), Cervello.Uscita {
         Proattivo.programma(this)
         WidgetJarvis.aggiorna(this)
 
-        if (chiaveAttiva().isEmpty()) {
+        // Jarvis vivo: scossa, inclinazione, telefono a faccia in giù
+        sensori = SensoriJarvis(this,
+            alScossa = { runOnUiThread { scossa() } },
+            alInclinare = { x, y -> reattore.inclinaX = x; reattore.inclinaY = y },
+            alCapovolgere = { giu -> runOnUiThread { capovolto(giu) } }
+        )
+
+        val riapri = prefs.getString("riapri", null)
+        if (riapri != null) {
+            // la schermata è stata ricostruita dopo un salvataggio: si torna alla pagina, non alla home
+            prefs.edit().remove("riapri").apply()
+            reattore.post {
+                when (riapri) {
+                    "aspetto" -> mostraAspetto()
+                    "editor" -> mostraEditor()
+                }
+            }
+        } else if (chiaveAttiva().isEmpty()) {
             aggiungiAlRegistro("Jarvis", "Benvenuto! Crea una chiave gratuita su aistudio.google.com/apikey e incollala in Cervello.")
             mostraCervello()
         } else if (cervello.haConversazione()) {
@@ -200,6 +258,7 @@ class MainActivity : Activity(), Cervello.Uscita {
         } else {
             aggiungiAlRegistro("Jarvis", "Pronto. Tocchi la sfera per parlare, la tenga premuta per il menu.")
         }
+        if (riapri == null) Umore.sorpresaDelGiorno(this)?.let { aggiungiAlRegistro("Jarvis", it) }
 
         // Se era attiva la modalità sempre attiva, la riaccende (ora l'app è in primo piano e può farlo)
         if (prefs.getBoolean("sempre_attivo", false) && !ServizioJarvis.attivo && permessoMicrofono()) {
@@ -249,6 +308,10 @@ class MainActivity : Activity(), Cervello.Uscita {
         super.onResume()
         cervello.uscita = this
         visibile = true
+        Trofei.alSblocco = { messaggio -> runOnUiThread { trofeoSbloccato(messaggio) } }
+        sensori?.avvia()
+        reattore.umore = Umore.attuale(this)
+        aggiornaPersonalizzazione()
         reattore.post(aggiornaHud)
         // Mentre la schermata è aperta, la parola di attivazione va in pausa per liberare il microfono
         ServizioJarvis.invia(this, ServizioJarvis.AZIONE_PAUSA)
@@ -257,6 +320,8 @@ class MainActivity : Activity(), Cervello.Uscita {
     override fun onPause() {
         cervello.uscita = null
         visibile = false
+        Trofei.alSblocco = null
+        sensori?.ferma()
         reattore.removeCallbacks(aggiornaHud)
         if (inAscolto) fermaAscolto()
         ServizioJarvis.invia(this, ServizioJarvis.AZIONE_RIPRENDI)
@@ -296,6 +361,10 @@ class MainActivity : Activity(), Cervello.Uscita {
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         @Suppress("DEPRECATION")
         super.onActivityResult(requestCode, resultCode, data)
+        if (resultCode == RESULT_OK && requestCode == CODICE_SFONDO) {
+            data?.data?.let { salvaFotoSfondo(it) }
+            return
+        }
         if (resultCode == RESULT_OK && (requestCode == CODICE_GALLERIA || requestCode == CODICE_DOCUMENTO)) {
             risultatoAllegati(data)
             return
@@ -346,7 +415,6 @@ class MainActivity : Activity(), Cervello.Uscita {
     private fun costruisciInterfaccia() {
         radice = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(COLORE_SFONDO)
             setPadding(dp(18), dp(16), dp(18), dp(14))
         }
         // Evita che la barra di stato e la tastiera coprano l'app
@@ -393,6 +461,26 @@ class MainActivity : Activity(), Cervello.Uscita {
             LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
         ).apply { topMargin = dp(6) })
 
+        // Partita in corso (giochi a voce)
+        rigaGioco = testoHud("", COLORE_ORO, 10.5f, 0.1f).apply {
+            gravity = Gravity.CENTER
+            visibility = View.GONE
+            setPadding(0, dp(6), 0, dp(2))
+            setOnClickListener { mostraGiochi() }
+        }
+        radice.addView(rigaGioco, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+
+        // Blocchi della home (sopra la sfera)
+        blocchiSopra = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        scorriSopra = HorizontalScrollView(this).apply {
+            isHorizontalScrollBarEnabled = false
+            visibility = View.GONE
+            addView(blocchiSopra)
+        }
+        radice.addView(scorriSopra, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+            topMargin = dp(8)
+        })
+
         // ---- Il reattore: sfera dorata con anelli HUD. Toccalo per parlare ----
         reattore = ReattoreView(this).apply {
             isClickable = true
@@ -415,8 +503,19 @@ class MainActivity : Activity(), Cervello.Uscita {
         ))
         radice.addView(
             contenitoreSfera,
-            LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1.3f).apply { topMargin = dp(4) }
+            LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, Personalizza.pesoSfera(prefs)).apply { topMargin = dp(4) }
         )
+
+        // Blocchi della home (sotto la sfera)
+        blocchiSotto = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        scorriSotto = HorizontalScrollView(this).apply {
+            isHorizontalScrollBarEnabled = false
+            visibility = View.GONE
+            addView(blocchiSotto)
+        }
+        radice.addView(scorriSotto, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+            topMargin = dp(4)
+        })
 
         // Testo che stai dicendo, in tempo reale
         stato = TextView(this).apply {
@@ -492,13 +591,40 @@ class MainActivity : Activity(), Cervello.Uscita {
             setPadding(dp(14), dp(8), dp(14), dp(2))
             setOnClickListener { scegliAllegato() }
         }
+        // Pulsanti rapidi
+        rigaPulsanti = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        scorriPulsanti = HorizontalScrollView(this).apply {
+            isHorizontalScrollBarEnabled = false
+            visibility = View.GONE
+            addView(rigaPulsanti)
+        }
+        radice.addView(scorriPulsanti, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+            topMargin = dp(8)
+        })
         radice.addView(vistaAllegati)
         radice.addView(rigaTesto, LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
         ).apply { topMargin = dp(10) })
 
-        setContentView(radice)
+        // Dock in basso (stile di menù "dock")
+        dock = costruisciDock()
+        radice.addView(dock, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(66)).apply { topMargin = dp(10) })
+
+        // Strati: colore di fondo, foto, velo scuro, schermata
+        fondo = FrameLayout(this).apply { setBackgroundColor(COLORE_SFONDO) }
+        fotoSfondo = ImageView(this).apply {
+            scaleType = ImageView.ScaleType.CENTER_CROP
+            visibility = View.GONE
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        }
+        veloSfondo = View(this).apply { visibility = View.GONE }
+        val pieno = FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
+        fondo.addView(fotoSfondo, pieno)
+        fondo.addView(veloSfondo, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+        fondo.addView(radice, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+        setContentView(fondo)
         scriviInfoHud()
+        aggiornaPersonalizzazione()
     }
 
     private fun scalaTesto() = when (prefs.getString("testo_dimensione", "normale")) {
@@ -525,7 +651,7 @@ class MainActivity : Activity(), Cervello.Uscita {
         r.ridotto = prefs.getString("animazioni", "piene") == "ridotte"
         r.forma = prefs.getString("forma", "sfera") ?: "sfera"
         r.interfaccia = prefs.getString("interfaccia", "hud") ?: "hud"
-        r.sfondo = prefs.getString("sfondo", "nessuno") ?: "nessuno"
+        r.sfondo = Personalizza.sfondoAttuale(this, prefs)
         r.scala = prefs.getFloat("r_scala", 1f)
         r.velocitaBase = prefs.getFloat("r_velocita", 1f)
         r.numeroParticelle = prefs.getInt("r_particelle", 40)
@@ -590,8 +716,8 @@ class MainActivity : Activity(), Cervello.Uscita {
                 riga.setSpan(ForegroundColorSpan(COLORE_TENUE), 0, riga.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
                 riga.setSpan(RelativeSizeSpan(0.9f), 0, riga.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
             }
-            "Memoria", "Fonti" -> {
-                val simbolo = if (chi == "Memoria") "◆ " else "◇ Fonti: "
+            "Memoria", "Fonti", "Trofeo" -> {
+                val simbolo = when (chi) { "Memoria" -> "◆ "; "Trofeo" -> "★ "; else -> "◇ Fonti: " }
                 riga = SpannableString("$simbolo$testo$finale")
                 riga.setSpan(TypefaceSpan("monospace"), 0, riga.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
                 riga.setSpan(ForegroundColorSpan(COLORE_ORO), 0, riga.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
@@ -620,7 +746,7 @@ class MainActivity : Activity(), Cervello.Uscita {
                 ultimaRisposta = ""
                 noteRecenti.clear()
             }
-            "Memoria", "Fonti" -> noteRecenti.add(chi to testo)
+            "Memoria", "Fonti", "Trofeo" -> noteRecenti.add(chi to testo)
             else -> ultimaRisposta = testo
         }
         if (modoSottotitoli()) {
@@ -662,50 +788,606 @@ class MainActivity : Activity(), Cervello.Uscita {
     //  MENU RADIALE E SOTTOMENÙ
     // ================================================================
 
-    private val VOCI_MENU = listOf("CERVELLO", "CARATTERE", "VOCE", "PLUGIN", "ATTIVO", "MATTINO", "ASPETTO", "COLLEGA", "DATI", "AGGIORNA")
+    /** Le voci del menù: id, nome breve per il menù radiale, spiegazione. */
+    private val VOCI_MENU = listOf(
+        Triple("CERVELLO", "CERVELLO", "Gemini o Claude, chiave e modello"),
+        Triple("CARATTERE", "CARATTERE", "Tono, battute e lunghezza delle risposte"),
+        Triple("VOCE", "VOCE", "Voce neurale, velocità e tono"),
+        Triple("ASPETTO", "ASPETTO", "Colori, forma della sfera e testo"),
+        Triple("PERSONALIZZA", "STILE", "Menù, home a blocchi, pulsanti, sfondo e suoni"),
+        Triple("GIOCHI", "GIOCHI", "Giochi a voce, minigiochi, trofei e Jarvis vivo"),
+        Triple("PLUGIN", "PLUGIN", "Cosa può usare Jarvis"),
+        Triple("ATTIVO", "ATTIVO", "Ehi Jarvis sempre in ascolto"),
+        Triple("MATTINO", "MATTINO", "Riepilogo del mattino"),
+        Triple("COLLEGA", "COLLEGA", "Casa, email e PC"),
+        Triple("DATI", "DATI", "Memoria, archivio e backup"),
+        Triple("AGGIORNA", "AGGIORNA", "Cerca una nuova versione")
+    )
     private var menuRadiale: MenuRadialeView? = null
 
-    /** Apre il menu radiale attorno alla sfera. */
+    /** Apre il menù nello stile scelto: radiale attorno alla sfera, oppure a tessere. */
     private fun mostraImpostazioni() {
+        if (Personalizza.stileMenu(prefs) != "radiale") {
+            mostraTessere()
+            return
+        }
         if (menuRadiale != null) return
         val menu = MenuRadialeView(
-            this, VOCI_MENU, tema,
+            this, VOCI_MENU.map { it.second }, tema,
             alScegliere = { i ->
                 chiudiMenuRadiale()
-                when (i) {
-                    0 -> mostraCervello()
-                    1 -> mostraPersonalita()
-                    2 -> mostraVoce()
-                    3 -> mostraPlugin()
-                    4 -> mostraSempreAttivo()
-                    5 -> mostraMattino()
-                    6 -> mostraAspetto()
-                    7 -> mostraCollegamenti()
-                    8 -> mostraDati()
-                    else -> aggiornaOra()
-                }
+                apriVoce(VOCI_MENU[i].first)
             },
-            alChiudere = { chiudiMenuRadiale() }
+            alChiudere = { chiudiMenuRadiale() },
+            descrizioni = VOCI_MENU.map { it.third }
         )
         menuRadiale = menu
-        contenitoreSfera.addView(menu, FrameLayout.LayoutParams(
+        fondo.addView(menu, FrameLayout.LayoutParams(
             FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT
         ))
     }
 
     private fun chiudiMenuRadiale() {
-        menuRadiale?.let { contenitoreSfera.removeView(it) }
+        menuRadiale?.let { fondo.removeView(it) }
         menuRadiale = null
+    }
+
+    private fun apriVoce(id: String) {
+        when (id) {
+            "CERVELLO" -> mostraCervello()
+            "CARATTERE" -> mostraPersonalita()
+            "VOCE" -> mostraVoce()
+            "ASPETTO" -> mostraAspetto()
+            "PERSONALIZZA" -> mostraPersonalizza()
+            "GIOCHI" -> mostraGiochi()
+            "PLUGIN" -> mostraPlugin()
+            "ATTIVO" -> mostraSempreAttivo()
+            "MATTINO" -> mostraMattino()
+            "COLLEGA" -> mostraCollegamenti()
+            "DATI" -> mostraDati()
+            else -> aggiornaOra()
+        }
+    }
+
+    /** Una riga sotto il nome di ogni tessera: lo stato attuale. */
+    private fun sottotitoloVoce(id: String): String = try {
+        when (id) {
+            "CERVELLO" -> if (usaClaude()) "Claude" else "Gemini"
+            "VOCE" -> if (prefs.getString("motore_voce", "") == "neurale") "Voce neurale" else "Voce del telefono"
+            "PERSONALIZZA" -> Personalizza.STILI_MENU.firstOrNull { it.first == Personalizza.stileMenu(prefs) }?.second?.substringBefore(":") ?: ""
+            "GIOCHI" -> Giochi.inCorso(this)?.substringBefore(" ·")?.let { "In corso: $it" } ?: "Livello ${Trofei.livello(Trofei.punti(this)).first}"
+            "ATTIVO" -> if (ServizioJarvis.attivo) "Acceso" else "Spento"
+            else -> VOCI_MENU.firstOrNull { it.first == id }?.third ?: ""
+        }
+    } catch (e: Exception) {
+        ""
+    }
+
+    /** Menù a tessere: tutte le voci in riquadri grandi. */
+    private fun mostraTessere() {
+        chiudiMenuRadiale()
+        val griglia = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(12), dp(6), dp(12), dp(6))
+        }
+        var finestra: AlertDialog? = null
+        for (coppia in VOCI_MENU.chunked(2)) {
+            val riga = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+            for ((id, _, _) in coppia) {
+                val evidenzia = id == "GIOCHI"
+                val tessera = LinearLayout(this).apply {
+                    orientation = LinearLayout.VERTICAL
+                    gravity = Gravity.BOTTOM
+                    setPadding(dp(14), dp(12), dp(12), dp(12))
+                    background = GradientDrawable().apply {
+                        cornerRadius = dp(18).toFloat()
+                        if (evidenzia) setColor(tema.accento) else {
+                            setColor(tema.superficie)
+                            setStroke(dp(1), Tema.conAlfa(tema.accento, 90))
+                        }
+                    }
+                    isClickable = true
+                    contentDescription = id.lowercase(Locale.ITALIAN)
+                    setOnClickListener {
+                        finestra?.dismiss()
+                        apriVoce(id)
+                    }
+                }
+                tessera.addView(TextView(this).apply {
+                    text = id.lowercase(Locale.ITALIAN).replaceFirstChar { it.uppercase() }
+                    textSize = 15f
+                    typeface = Typeface.DEFAULT_BOLD
+                    setTextColor(if (evidenzia) tema.sfondo else COLORE_BIANCO)
+                })
+                tessera.addView(TextView(this).apply {
+                    text = sottotitoloVoce(id)
+                    textSize = 11.5f
+                    maxLines = 2
+                    setTextColor(if (evidenzia) Tema.conAlfa(tema.sfondo, 200) else COLORE_TENUE)
+                })
+                riga.addView(tessera, LinearLayout.LayoutParams(0, dp(92), 1f).apply { setMargins(dp(4), dp(4), dp(4), dp(4)) })
+            }
+            if (coppia.size == 1) riga.addView(View(this), LinearLayout.LayoutParams(0, dp(92), 1f))
+            griglia.addView(riga)
+        }
+        finestra = AlertDialog.Builder(this)
+            .setTitle(cervello.nomeAssistente())
+            .setView(ScrollView(this).apply { addView(griglia) })
+            .setPositiveButton("Chiudi", null)
+            .show()
+    }
+
+    // ================================================================
+    //  DOCK, GESTI, BLOCCHI, PULSANTI E SFONDO
+    // ================================================================
+
+    private fun costruisciDock(): LinearLayout {
+        val d = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(4), dp(2), dp(4), dp(2))
+            background = GradientDrawable().apply {
+                cornerRadius = dp(26).toFloat()
+                setColor(tema.superficie)
+                setStroke(dp(1), Tema.conAlfa(tema.accento, 90))
+            }
+            visibility = View.GONE
+        }
+        fun voce(simbolo: String, nome: String, azione: () -> Unit) = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            isClickable = true
+            contentDescription = nome
+            setOnClickListener { azione() }
+            addView(TextView(this@MainActivity).apply {
+                text = simbolo
+                textSize = 19f
+                gravity = Gravity.CENTER
+                setTextColor(COLORE_ORO)
+            })
+            addView(TextView(this@MainActivity).apply {
+                text = nome
+                textSize = 10f
+                gravity = Gravity.CENTER
+                setTextColor(COLORE_TENUE)
+            })
+        }
+        val pieno = { LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f) }
+        d.addView(voce("⌂", "Casa") { tornaCasa() }, pieno())
+        d.addView(voce("☰", "Chat") { mostraCronologia() }, pieno())
+        d.addView(TextView(this).apply {
+            text = "◉"
+            textSize = 24f
+            gravity = Gravity.CENTER
+            setTextColor(tema.sfondo)
+            contentDescription = "Parla con Jarvis"
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(tema.accento)
+            }
+            setOnClickListener { reattore.performClick() }
+        }, LinearLayout.LayoutParams(dp(54), dp(54)).apply { setMargins(dp(6), 0, dp(6), 0) })
+        d.addView(voce("✦", "Giochi") { mostraGiochi() }, pieno())
+        d.addView(voce("≡", "Opzioni") { mostraTessere() }, pieno())
+        return d
+    }
+
+    private fun tornaCasa() {
+        chiudiMenuRadiale()
+        pannello?.chiudi()
+        if (editor != null) chiudiEditor(false)
+        scorrimento.post { scorrimento.scrollTo(0, 0) }
+        stato.text = ""
+    }
+
+    /** Azioni dei gesti sulla sfera (e di qualche blocco). */
+    private fun eseguiAzione(azione: String) {
+        when (azione) {
+            "chat" -> mostraCronologia()
+            "opzioni" -> mostraTessere()
+            "giochi" -> mostraGiochi()
+            "agenda" -> gestisciRichiesta("cosa ho oggi")
+            "meteo" -> gestisciRichiesta("che tempo fa")
+            "trofei" -> mostraTrofei()
+            "minigiochi" -> avviaMinigioco(null)
+            "personalizza" -> mostraPersonalizza()
+        }
+    }
+
+    /** Riapplica alla schermata tutte le scelte di PERSONALIZZA (anche durante la prova dal vivo). */
+    private fun aggiornaPersonalizzazione() {
+        if (!::dock.isInitialized) return
+        val stile = Personalizza.stileMenu(prefs)
+        dock.visibility = if (stile == "dock") View.VISIBLE else View.GONE
+        reattore.alGesto = if (stile == "gesti") { direzione -> eseguiAzione(Personalizza.azioneGesto(prefs, direzione)) } else null
+        (contenitoreSfera.layoutParams as? LinearLayout.LayoutParams)?.let {
+            it.weight = Personalizza.pesoSfera(prefs)
+            contenitoreSfera.layoutParams = it
+        }
+        reattore.sfondo = Personalizza.sfondoAttuale(this, prefs)
+        riempiBlocchi()
+        riempiPulsanti()
+        aggiornaSfondo()
+        aggiornaRigaGioco()
+    }
+
+    private fun aggiornaRigaGioco() {
+        val r = try { Giochi.inCorso(this) } catch (e: Exception) { null }
+        rigaGioco.text = if (r != null) "▶ ${r.uppercase(Locale.ITALIAN)}" else ""
+        rigaGioco.visibility = if (r != null) View.VISIBLE else View.GONE
+    }
+
+    private fun riempiBlocchi() {
+        val elenco = Personalizza.blocchi(prefs)
+        val sopra = prefs.getBoolean("blocchi_sopra", true)
+        blocchiSopra.removeAllViews()
+        blocchiSotto.removeAllViews()
+        scorriSopra.visibility = if (sopra && elenco.isNotEmpty()) View.VISIBLE else View.GONE
+        scorriSotto.visibility = if (!sopra && elenco.isNotEmpty()) View.VISIBLE else View.GONE
+        val dove = if (sopra) blocchiSopra else blocchiSotto
+        for (id in elenco) {
+            dove.addView(vistaBlocco(id), LinearLayout.LayoutParams(dp(138), LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+                marginEnd = dp(8)
+            })
+        }
+        val adesso = System.currentTimeMillis()
+        if ("meteo" in elenco && adesso - meteoQuando > 30 * 60_000L) {
+            meteoQuando = adesso
+            Thread {
+                val r = try { cervello.telefono.meteo("", "oggi") } catch (e: Exception) { "" }
+                meteoBreve = r.substringBefore(". ").take(80)
+                runOnUiThread { riempiBlocchi() }
+            }.start()
+        }
+        if ("agenda" in elenco && adesso - agendaQuando > 10 * 60_000L) {
+            agendaQuando = adesso
+            Thread {
+                val r = try { ComandiRapidi.prova(cervello, "cosa ho oggi") ?: "" } catch (e: Exception) { "" }
+                agendaBreve = r.take(90)
+                runOnUiThread { riempiBlocchi() }
+            }.start()
+        }
+    }
+
+    private fun vistaBlocco(id: String): View {
+        val (valore, azione) = try {
+            when (id) {
+                "meteo" -> meteoBreve.ifEmpty { "Carico il meteo…" } to { gestisciRichiesta("che tempo fa") }
+                "batteria" -> {
+                    val gestore = getSystemService(Context.BATTERY_SERVICE) as android.os.BatteryManager
+                    val livello = gestore.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY)
+                    val carica = Build.VERSION.SDK_INT >= 23 && gestore.isCharging
+                    "$livello%${if (carica) " · in carica" else ""}" to { gestisciRichiesta("quanta batteria ho") }
+                }
+                "agenda" -> agendaBreve.ifEmpty { "Leggo l'agenda…" } to { gestisciRichiesta("cosa ho oggi") }
+                "promemoria" -> (Promemoria.promemoriaDiOggi(this).firstOrNull() ?: "Nessuno per oggi") to {
+                    aggiungiAlRegistro("Jarvis", Promemoria.descrivi(this))
+                }
+                "gioco" -> (Giochi.inCorso(this) ?: "Indovinello del giorno: tocca per giocare") to { avviaGiocoDelGiorno() }
+                "trofei" -> {
+                    val (l, dentro, serve) = Trofei.livello(Trofei.punti(this))
+                    "Livello $l · ${Trofei.nomeLivello(l)} · $dentro/$serve" to { mostraTrofei() }
+                }
+                "sfida" -> Trofei.sfida(this) to { mostraTrofei() }
+                else -> Liste.leggi(this, "spesa").take(90) to { gestisciRichiesta("cosa c'è nella lista della spesa") }
+            }
+        } catch (e: Exception) {
+            "—" to {}
+        }
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(12), dp(10), dp(12), dp(10))
+            background = GradientDrawable().apply {
+                cornerRadius = dp(16).toFloat()
+                setColor(Tema.conAlfa(tema.superficie, 230))
+                setStroke(dp(1), Tema.conAlfa(tema.accento, 80))
+            }
+            isClickable = true
+            contentDescription = Personalizza.nomeBlocco(id)
+            setOnClickListener { azione() }
+            addView(testoHud(Personalizza.nomeBlocco(id).uppercase(Locale.ITALIAN), COLORE_TENUE, 9f, 0.12f))
+            addView(TextView(this@MainActivity).apply {
+                text = valore
+                textSize = 13f
+                maxLines = 3
+                ellipsize = android.text.TextUtils.TruncateAt.END
+                setTextColor(COLORE_BIANCO)
+                setPadding(0, dp(4), 0, 0)
+            })
+        }
+    }
+
+    private fun avviaGiocoDelGiorno() {
+        if (occupato) return
+        Thread {
+            Trofei.giocoIniziato(this, "indovinello")
+            val r = Giochi.avviaIndovinello(this, Giochi.indiceDelGiorno())
+            runOnUiThread {
+                aggiungiAlRegistro("Tu", "Gioco del giorno")
+                aggiungiAlRegistro("Jarvis", r)
+                parla(r)
+                aggiornaRigaGioco()
+            }
+        }.start()
+    }
+
+    private fun riempiPulsanti() {
+        rigaPulsanti.removeAllViews()
+        val elenco = Personalizza.pulsanti(prefs)
+        scorriPulsanti.visibility = if (elenco.isEmpty()) View.GONE else View.VISIBLE
+        for (pu in elenco) {
+            rigaPulsanti.addView(TextView(this).apply {
+                text = pu.etichetta
+                textSize = 13f
+                setTextColor(tema.sfondo)
+                gravity = Gravity.CENTER
+                setPadding(dp(14), dp(9), dp(14), dp(9))
+                background = GradientDrawable().apply {
+                    cornerRadius = dp(18).toFloat()
+                    setColor(tema.accento)
+                }
+                setOnClickListener { premiPulsante(pu) }
+            }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+                marginEnd = dp(6)
+            })
+        }
+    }
+
+    private fun premiPulsante(pu: Personalizza.Pulsante) {
+        when (pu.frase) {
+            Personalizza.ZITTO -> { parlatore.ferma(); parlando = false; aggiornaMic() }
+            Personalizza.GIOCO_DEL_GIORNO -> avviaGiocoDelGiorno()
+            Personalizza.MINIGIOCHI -> avviaMinigioco(null)
+            Personalizza.TROFEI -> mostraTrofei()
+            Personalizza.TORCIA -> {
+                torciaAccesa = !torciaAccesa
+                gestisciRichiesta(if (torciaAccesa) "accendi la torcia" else "spegni la torcia")
+            }
+            else -> gestisciRichiesta(pu.frase)
+        }
+    }
+
+    private val CODICE_SFONDO = 40
+
+    private fun scegliFotoSfondo() {
+        try {
+            @Suppress("DEPRECATION")
+            startActivityForResult(Intent(Intent.ACTION_GET_CONTENT).setType("image/*").addCategory(Intent.CATEGORY_OPENABLE), CODICE_SFONDO)
+        } catch (e: Exception) {
+            Toast.makeText(this, "Non trovo un'app per scegliere le foto.", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    /** Copia la foto scelta (ridotta) nei file di Jarvis e la mette come sfondo, in prova. */
+    private fun salvaFotoSfondo(uri: Uri) {
+        Thread {
+            val ok = try {
+                val dati = contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: ByteArray(0)
+                val misure = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                BitmapFactory.decodeByteArray(dati, 0, dati.size, misure)
+                var riduzione = 1
+                while (maxOf(misure.outWidth, misure.outHeight) / (riduzione * 2) >= 1600) riduzione *= 2
+                val immagine = BitmapFactory.decodeByteArray(dati, 0, dati.size, BitmapFactory.Options().apply { inSampleSize = riduzione })
+                Personalizza.fileFoto(this).outputStream().use { immagine.compress(android.graphics.Bitmap.CompressFormat.JPEG, 85, it) }
+                true
+            } catch (e: Throwable) {
+                false
+            }
+            runOnUiThread {
+                if (ok) {
+                    prefs.edit().putString("sfondo", "foto").putBoolean("sfondo_giornaliero", false).apply()
+                    fotoCaricata = ""
+                    aggiornaPersonalizzazione()
+                    pannello?.ricarica()
+                } else {
+                    Toast.makeText(this, "Non riesco a leggere questa foto.", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }.start()
+    }
+
+    private fun aggiornaSfondo() {
+        val scelto = Personalizza.sfondoAttuale(this, prefs)
+        val file = Personalizza.fileFoto(this)
+        if (scelto == "foto" && file.exists()) {
+            val sfoca = Personalizza.sfocatura(prefs)
+            val chiave = "${file.lastModified()}:$sfoca"
+            if (chiave != fotoCaricata) {
+                fotoCaricata = chiave
+                val nuova = Build.VERSION.SDK_INT >= 31
+                val opzioni = BitmapFactory.Options().apply { inSampleSize = if (nuova) 1 else 1 + sfoca / 12 }
+                val immagine = try { BitmapFactory.decodeFile(file.path, opzioni) } catch (e: Throwable) { null }
+                fotoSfondo.setImageBitmap(immagine)
+                if (nuova) {
+                    val raggio = sfoca * 0.3f * resources.displayMetrics.density
+                    fotoSfondo.setRenderEffect(if (raggio > 0f) RenderEffect.createBlurEffect(raggio, raggio, Shader.TileMode.CLAMP) else null)
+                }
+            }
+            fotoSfondo.visibility = View.VISIBLE
+            veloSfondo.visibility = View.VISIBLE
+            veloSfondo.setBackgroundColor(Tema.conAlfa(tema.sfondo, Personalizza.oscura(prefs) * 255 / 100))
+        } else {
+            fotoSfondo.visibility = View.GONE
+            veloSfondo.visibility = View.GONE
+            if (fotoCaricata.isNotEmpty()) {
+                fotoSfondo.setImageDrawable(null)
+                fotoCaricata = ""
+            }
+        }
+    }
+
+    // ================================================================
+    //  PERSONALIZZA: pannello con prova dal vivo
+    // ================================================================
+
+    private fun mostraPersonalizza(scheda: String = "menu") {
+        chiudiMenuRadiale()
+        if (pannello != null) {
+            pannello?.mostraScheda(scheda)
+            return
+        }
+        val altezza = (fondo.height * 0.6f).toInt().coerceAtLeast(dp(340))
+        val p = PannelloPersonalizza(this, prefs, tema, altezza,
+            aggiorna = { aggiornaPersonalizzazione() },
+            scegliFoto = { scegliFotoSfondo() },
+            alChiudere = {
+                pannello?.let { fondo.removeView(it.vista) }
+                pannello = null
+            })
+        pannello = p
+        fondo.addView(p.vista, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, altezza, Gravity.BOTTOM))
+        p.mostraScheda(scheda)
+    }
+
+    // ================================================================
+    //  GIOCHI, TROFEI E JARVIS VIVO
+    // ================================================================
+
+    private fun avviaMinigioco(id: String?) {
+        val intento = Intent(this, MinigiochiActivity::class.java)
+        if (id != null) intento.putExtra("gioco", id)
+        startActivity(intento)
+    }
+
+    private fun mostraGiochi() {
+        chiudiMenuRadiale()
+        val pagina = Pagina("Giochi")
+        Giochi.inCorso(this)?.let { inCorso ->
+            pagina.titoloSezione("Partita in corso")
+            pagina.nota(inCorso)
+            pagina.bottone("Continua: ripetimi l'ultima domanda") { pagina.chiudi(); gestisciRichiesta("ripeti") }
+            pagina.bottone("Termina la partita") {
+                Giochi.termina(this)
+                aggiornaRigaGioco()
+                pagina.chiudi()
+                aggiungiAlRegistro("Jarvis", "Partita terminata.")
+            }
+        }
+        pagina.titoloSezione("Giochi a voce")
+        pagina.nota("Si gioca parlando. Impiccato, indovinelli e quiz funzionano anche senza internet. Per smettere di' «basta giocare».")
+        for ((id, nome) in Giochi.ELENCO) {
+            val frase = Giochi.FRASI[id] ?: continue
+            pagina.bottone("$nome  ·  «$frase»") { pagina.chiudi(); gestisciRichiesta(frase) }
+        }
+        pagina.titoloSezione("Minigiochi con la sfera")
+        for ((id, nome, _) in MinigiochiActivity.GIOCHI) {
+            val record = MinigiochiActivity.record(this, id)
+            pagina.bottone(if (record > 0) "$nome  ·  record $record" else nome) { avviaMinigioco(id) }
+        }
+        pagina.titoloSezione("Livelli e trofei")
+        val (livello, dentro, serve) = Trofei.livello(Trofei.punti(this))
+        pagina.nota("Livello $livello · ${Trofei.nomeLivello(livello)} · $dentro su $serve punti · " +
+            "${Trofei.sbloccati(this).size} trofei su ${Trofei.TUTTI.size}")
+        pagina.bottone("Apri livelli e trofei") { pagina.chiudi(); mostraTrofei() }
+
+        pagina.titoloSezione("Jarvis vivo")
+        val caselle = Umore.OPZIONI.map { (chiave, testo, _) -> chiave to pagina.casella(testo, Umore.opzione(this, chiave)) }
+        pagina.nota("Umore")
+        val umore = pagina.scelta(listOf("auto" to "Automatico: cambia da solo durante la giornata") + Umore.UMORI,
+            prefs.getString("umore_fisso", "auto") ?: "auto")
+        pagina.prova("Prova l'umore: guarda la sfera",
+            applica = { reattore.umore = umore().let { if (it == "auto") Umore.attuale(this) else it } },
+            ripristina = { reattore.umore = Umore.attuale(this) })
+        pagina.mostra {
+            val e = prefs.edit()
+            for ((chiave, casella) in caselle) e.putBoolean(chiave, casella.isChecked)
+            e.putString("umore_fisso", umore()).apply()
+            reattore.umore = Umore.attuale(this)
+            if (!Umore.opzione(this, "vivo_inclina")) { reattore.inclinaX = 0f; reattore.inclinaY = 0f }
+            Thread { Trofei.evento(this, "personalizza", 5) }.start()
+        }
+    }
+
+    private fun mostraTrofei() {
+        chiudiMenuRadiale()
+        val pagina = Pagina("Livelli e trofei")
+        val punti = Trofei.punti(this)
+        val (livello, dentro, serve) = Trofei.livello(punti)
+        pagina.titoloSezione("Livello $livello · ${Trofei.nomeLivello(livello)}")
+        val pieni = (dentro * 16 / serve.coerceAtLeast(1)).coerceIn(0, 16)
+        pagina.riga("█".repeat(pieni) + "░".repeat(16 - pieni) + "  $dentro su $serve", COLORE_ORO)
+        pagina.nota("Punti totali: $punti · giorni di fila: ${Trofei.serie(this)}")
+        pagina.titoloSezione("Sfida di oggi")
+        pagina.nota(Trofei.sfida(this))
+        val sbloccati = Trofei.sbloccati(this)
+        pagina.titoloSezione("Trofei · ${sbloccati.size} su ${Trofei.TUTTI.size}")
+        for (t in Trofei.TUTTI) {
+            val preso = t.id in sbloccati
+            pagina.riga((if (preso) "◆ " else "◇ ") + t.nome + "  ·  " + t.descrizione, if (preso) COLORE_BIANCO else COLORE_TENUE)
+        }
+        pagina.nota("Si guadagnano punti usando Jarvis, giocando e personalizzandolo. Ogni trofeo vale 25 punti.")
+        pagina.mostra()
+    }
+
+    /** Un trofeo, un livello o una sfida completata: festa sulla sfera. */
+    private fun trofeoSbloccato(messaggio: String) {
+        aggiungiAlRegistro("Trofeo", messaggio)
+        Umore.imposta("allegro", 120)
+        reattore.umore = "allegro"
+        reattore.festeggia()
+        aggiornaRigaGioco()
+        if (Personalizza.blocchi(prefs).isNotEmpty()) riempiBlocchi()
+    }
+
+    private fun scossa() {
+        reattore.scuoti()
+        Suoni.vibra(this, "scossa")
+        val frase = Umore.scossa(this)
+        reattore.umore = Umore.attuale(this)
+        if (!occupato && !inAscolto && !parlando && !reattore.dorme) {
+            stato.text = frase
+            parla(frase)
+        }
+    }
+
+    private fun capovolto(giu: Boolean) {
+        reattore.dorme = giu
+        if (giu) {
+            parlatore.ferma()
+            parlando = false
+            if (inAscolto) fermaAscolto()
+            aggiornaMic()
+            stato.text = "Dormo. Girami per svegliarmi."
+        } else {
+            reattore.umore = Umore.attuale(this)
+            stato.text = "Eccomi, sono sveglio."
+        }
     }
 
     @Deprecated("Gestione del tasto indietro")
     override fun onBackPressed() {
-        if (menuRadiale != null) {
-            chiudiMenuRadiale()
-        } else {
-            @Suppress("DEPRECATION")
-            super.onBackPressed()
+        when {
+            barraAnteprima != null -> barraAnteprima?.performClick()
+            menuRadiale != null -> chiudiMenuRadiale()
+            pannello != null -> pannello?.chiudi()
+            editor != null -> chiudiEditor(false)
+            else -> {
+                @Suppress("DEPRECATION")
+                super.onBackPressed()
+            }
         }
+    }
+
+    /** Barra in basso durante la prova di una pagina: toccandola si torna alla pagina. */
+    private fun mostraBarraAnteprima(alTornare: () -> Unit) {
+        barraAnteprima?.let { fondo.removeView(it) }
+        val barra = testoHud("ANTEPRIMA · TOCCA QUI PER TORNARE ALLA PAGINA", tema.sfondo, 11f, 0.12f).apply {
+            gravity = Gravity.CENTER
+            setPadding(dp(12), dp(16), dp(12), dp(16))
+            background = GradientDrawable().apply {
+                cornerRadius = dp(24).toFloat()
+                setColor(tema.accento)
+            }
+            setOnClickListener {
+                fondo.removeView(this)
+                barraAnteprima = null
+                alTornare()
+            }
+        }
+        barraAnteprima = barra
+        fondo.addView(barra, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM).apply {
+            setMargins(dp(16), 0, dp(16), dp(28))
+        })
     }
 
     /** Una pagina di sottomenù, con titolo, contenuti e tasto Salva. */
@@ -733,6 +1415,41 @@ class MainActivity : Activity(), Cervello.Uscita {
                 setTextColor(COLORE_TENUE)
                 setPadding(0, dp(4), 0, 0)
             })
+        }
+
+        fun riga(testo: String, colore: Int) {
+            contenitore.addView(TextView(this@MainActivity).apply {
+                text = testo
+                textSize = 13.5f
+                setTextColor(colore)
+                setPadding(0, dp(5), 0, 0)
+            })
+        }
+
+        var dialogo: AlertDialog? = null
+        private var applicaProva: (() -> Unit)? = null
+        private var ripristinaProva: (() -> Unit)? = null
+        private var inProva = false
+
+        fun chiudi() {
+            dialogo?.dismiss()
+        }
+
+        /** Un pulsante in cima alla pagina: nasconde la pagina e mostra la schermata con le scelte, prima di salvarle. */
+        fun prova(testo: String = "Prova: guarda come viene sullo schermo", applica: () -> Unit, ripristina: () -> Unit) {
+            applicaProva = applica
+            ripristinaProva = ripristina
+            contenitore.addView(Button(this@MainActivity).apply {
+                text = "◉  $testo"
+                isAllCaps = false
+                setOnClickListener {
+                    val d = dialogo ?: return@setOnClickListener
+                    applica()
+                    inProva = true
+                    d.hide()
+                    mostraBarraAnteprima { d.show() }
+                }
+            }, 0)
         }
 
         fun campo(etichetta: String, valore: String, nascosto: Boolean = false): EditText {
@@ -801,18 +1518,39 @@ class MainActivity : Activity(), Cervello.Uscita {
             selettori[scelta]?.invoke(valore)
         }
 
+        /** Mostra la pagina. Salva non chiude: si resta sulla pagina e si può continuare a cambiare. */
         fun mostra(alSalvare: (() -> Unit)? = null) {
             val finestra = AlertDialog.Builder(this@MainActivity)
                 .setTitle(titolo)
                 .setView(ScrollView(this@MainActivity).apply { addView(contenitore) })
             if (alSalvare != null) {
-                finestra.setPositiveButton("Salva") { _, _ -> alSalvare() }
-                finestra.setNegativeButton("Annulla", null)
+                finestra.setPositiveButton("Salva", null)
+                finestra.setNegativeButton("Chiudi", null)
             } else {
                 finestra.setPositiveButton("Chiudi", null)
             }
             finestra.setNeutralButton("Menu") { _, _ -> mostraImpostazioni() }
-            finestra.show()
+            val d = finestra.create()
+            dialogo = d
+            d.setOnDismissListener {
+                if (barraAnteprima != null) { barraAnteprima?.let { fondo.removeView(it) }; barraAnteprima = null }
+                if (inProva) { inProva = false; ripristinaProva?.invoke() }
+            }
+            d.show()
+            if (alSalvare != null) {
+                d.getButton(AlertDialog.BUTTON_POSITIVE)?.setOnClickListener {
+                    try {
+                        alSalvare()
+                        inProva = false
+                        if (!isFinishing && d.isShowing) {
+                            d.setTitle("$titolo  ·  salvato ✓")
+                            Toast.makeText(this@MainActivity, "Salvato. Resti su questa pagina.", Toast.LENGTH_SHORT).show()
+                        }
+                    } catch (e: Exception) {
+                        Toast.makeText(this@MainActivity, "Non sono riuscito a salvare: ${e.message}", Toast.LENGTH_LONG).show()
+                    }
+                }
+            }
         }
     }
 
@@ -1402,7 +2140,28 @@ class MainActivity : Activity(), Cervello.Uscita {
         pagina.titoloSezione("Gioca con la sfera")
         pagina.nota("Due dita per lo zoom · trascina in cerchio per far girare gli anelli · lancia con il dito per farli ruotare · " +
             "tocca per le onde di luce · doppio tocco per tornare normale · cinque tocchi veloci per una sorpresa.")
-        pagina.bottone("✎ Modifica dal vivo: dimensione, velocità, particelle, colore...") { mostraEditor() }
+        pagina.bottone("✎ Modifica dal vivo: dimensione, velocità, particelle, colore...") { pagina.chiudi(); mostraEditor() }
+        pagina.prova(
+            applica = {
+                val p = Tema.PALETTE.firstOrNull { it.id == colori() } ?: tema
+                reattore.palette = p
+                reattore.forma = forma()
+                reattore.interfaccia = interfaccia()
+                reattore.sfondo = sfondo()
+                reattore.ridotto = animazioni() == "ridotte"
+                fondo.setBackgroundColor(p.sfondo)
+                registro.setTextColor(p.testo)
+                infoHud.visibility = if (interfaccia() == "minimal" || !dati.isChecked) View.GONE else View.VISIBLE
+            },
+            ripristina = {
+                reattore.palette = tema
+                applicaRegolazioni(reattore)
+                fondo.setBackgroundColor(tema.sfondo)
+                registro.setTextColor(COLORE_BIANCO)
+                infoHud.visibility = if (prefs.getString("interfaccia", "hud") == "minimal" || !prefs.getBoolean("mostra_dati", true)) View.GONE else View.VISIBLE
+                aggiornaPersonalizzazione()
+            }
+        )
         pagina.mostra {
             val cambiaTutto = colori() != tema.id || interfaccia() != prefs.getString("interfaccia", "hud") ||
                 dimensione() != prefs.getString("testo_dimensione", "normale") ||
@@ -1419,7 +2178,8 @@ class MainActivity : Activity(), Cervello.Uscita {
                 .putBoolean("mostra_dati", dati.isChecked)
                 .apply()
             if (cambiaTutto) {
-                recreate()      // ricostruisce la schermata con i nuovi colori
+                prefs.edit().putString("riapri", "aspetto").apply()
+                recreate()      // ricostruisce la schermata con i nuovi colori e riapre questa pagina
             } else {
                 applicaRegolazioni(reattore)
                 ridisegnaConversazione()
@@ -1453,8 +2213,8 @@ class MainActivity : Activity(), Cervello.Uscita {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
-        intestazione.addView(testoHud("MODIFICA DAL VIVO", COLORE_ORO, 12f, 0.2f),
-            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        val titoloEditor = testoHud("MODIFICA DAL VIVO", COLORE_ORO, 12f, 0.2f)
+        intestazione.addView(titoloEditor, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         intestazione.addView(testoHud("✕", COLORE_ORO, 16f, 0f).apply {
             setPadding(dp(12), dp(4), dp(4), dp(4))
             setOnClickListener { chiudiEditor(false) }
@@ -1541,7 +2301,14 @@ class MainActivity : Activity(), Cervello.Uscita {
                 .putString("interfaccia", r.interfaccia)
                 .putString("sfondo", r.sfondo)
                 .apply()
-            chiudiEditor(true)
+            Thread { Trofei.evento(this, "personalizza", 10) }.start()
+            if (tema.accento != Tema.attuale(prefs).accento) {
+                // nuovo colore: si ricostruisce la schermata e si torna qui
+                prefs.edit().putString("riapri", "editor").apply()
+                chiudiEditor(true)
+            } else {
+                titoloEditor.text = "MODIFICA DAL VIVO · SALVATO ✓"
+            }
         }
         azione("Sorpresa") {
             val c = kotlin.random.Random(System.nanoTime())
@@ -1567,16 +2334,16 @@ class MainActivity : Activity(), Cervello.Uscita {
         pannello.addView(riga)
 
         editor = contenitore
-        contenitoreSfera.addView(contenitore, FrameLayout.LayoutParams(
-            FrameLayout.LayoutParams.MATCH_PARENT, (contenitoreSfera.height * 0.62f).toInt().coerceAtLeast(dp(260)), Gravity.BOTTOM
+        fondo.addView(contenitore, FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT, (fondo.height * 0.5f).toInt().coerceAtLeast(dp(300)), Gravity.BOTTOM
         ))
     }
 
     private fun chiudiEditor(salvato: Boolean, ricarica: Boolean = true) {
-        editor?.let { contenitoreSfera.removeView(it) }
+        editor?.let { fondo.removeView(it) }
         editor = null
         if (salvato) {
-            val cambiaColore = prefs.getInt("r_tonalita", -1) >= 0 || tema != Tema.attuale(prefs)
+            val cambiaColore = tema.accento != Tema.attuale(prefs).accento
             aggiungiAlRegistro("Jarvis", "Aspetto salvato.")
             if (cambiaColore) recreate()
         } else if (ricarica) {
@@ -2148,6 +2915,7 @@ class MainActivity : Activity(), Cervello.Uscita {
                 setRecognitionListener(ascoltatore)
             }
         }
+        Suoni.sveglia(this)
         riconoscitore?.startListening(Orecchie.richiesta(this, true))
         inAscolto = true
         aggiornaMic()
@@ -2248,6 +3016,7 @@ class MainActivity : Activity(), Cervello.Uscita {
         cervello.chiParla = ""
         parlatore.inizia()
         risposteParziale = StringBuilder()
+        if (Suoni.attivo(this, "suoni_pensa")) reattore.postDelayed(ticchettio, 450)
 
         Thread {
             // la risposta arriva a pezzi: Jarvis parla subito e i sottotitoli si scrivono man mano
@@ -2272,6 +3041,7 @@ class MainActivity : Activity(), Cervello.Uscita {
                 parlatore.fine(risposta.testo)
                 if (risposta.mancaChiave) mostraCervello()
                 scriviInfoHud()
+                aggiornaRigaGioco()
             }
             cervello.manutenzione()
         }.start()

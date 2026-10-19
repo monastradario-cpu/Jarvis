@@ -54,6 +54,9 @@ object Statistiche {
         val s = dati.optJSONObject("strumenti") ?: JSONObject().also { dati.put("strumenti", it) }
         for (nome in strumenti.distinct()) aggiungi(s, nome, 1)
         salva(ctx, dati)
+        // punti e trofei; una vibrazione leggera quando un comando è stato eseguito davvero
+        try { Trofei.richiesta(ctx, tipo, strumenti.distinct()) } catch (e: Throwable) { }
+        if (strumenti.isNotEmpty()) try { Suoni.esegue(ctx) } catch (e: Throwable) { }
     }
 
     /** Dal servizio sempre attivo: secondi di ascolto, secondi di analisi dell'audio, punti di batteria persi. */

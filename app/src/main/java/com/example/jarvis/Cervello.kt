@@ -246,6 +246,15 @@ class Cervello private constructor(private val ctx: Context) {
         // 0. Impara da solo, senza IA, i fatti che l'utente dice di sé ("mi chiamo...", "abito a...")
         if (!privata) try { memoria.imparaLocale(testo) } catch (e: Exception) { }
 
+        // 0b. Giochi a voce: se una partita è in corso (o la si chiede), risponde il gioco
+        val gioco = try { Giochi.prova(this, ctx, testo) } catch (e: Exception) { null }
+        if (gioco != null) {
+            ultimaRisposta = gioco
+            scriviNelDiario(testo, gioco, "gioco")
+            Statistiche.richiesta(ctx, "gioco", System.currentTimeMillis() - inizio, emptyList())
+            return Risposta(gioco, emptyList())
+        }
+
         // 1. Comandi semplici, catene di comandi e routine: subito, anche offline e senza chiave
         var tipoLocale = "rapida"
         val rapida = if (prefs.getBoolean("comandi_rapidi", true)) {

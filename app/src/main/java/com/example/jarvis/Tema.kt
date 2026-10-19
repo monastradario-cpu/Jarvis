@@ -61,7 +61,9 @@ object Tema {
     val SFONDI = listOf(
         "nessuno" to "Tinta unita",
         "griglia" to "Griglia HUD",
-        "stelle" to "Cielo stellato"
+        "stelle" to "Cielo stellato",
+        "onde" to "Onde: cerchi che si allargano piano",
+        "foto" to "La tua foto (si sceglie in PERSONALIZZA)"
     )
 
     fun attuale(prefs: SharedPreferences): Palette {

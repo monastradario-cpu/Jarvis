@@ -23,7 +23,9 @@ class MenuRadialeView(
     private val voci: List<String>,
     private val palette: Tema.Palette,
     private val alScegliere: (Int) -> Unit,
-    private val alChiudere: () -> Unit
+    private val alChiudere: () -> Unit,
+    /** Una riga di spiegazione per ogni voce: compare al centro mentre il dito ci passa sopra. */
+    private val descrizioni: List<String> = emptyList()
 ) : View(context) {
 
     private val oro = palette.accento
@@ -57,7 +59,7 @@ class MenuRadialeView(
     private fun cx() = width / 2f
     private fun cy() = (height - 26f * densita) / 2f
     private fun raggioMenu() = min(width.toFloat(), height - 26f * densita) / 2f * 0.74f
-    private fun raggioVoce() = 31f * densita
+    private fun raggioVoce() = (if (voci.size > 10) 29f else 31f) * densita
 
     private fun posizione(i: Int): Pair<Float, Float> {
         val angolo = Math.toRadians(-90.0 + i * 360.0 / voci.size)
@@ -80,8 +82,8 @@ class MenuRadialeView(
         canvas.drawCircle(cx(), cy(), raggioMenu() * apertura, pennello)
 
         val rv = raggioVoce() * (0.6f + 0.4f * apertura)
-        pennelloTesto.textSize = 9.5f * densita
         for (i in voci.indices) {
+            pennelloTesto.textSize = (if (voci[i].length > 7) 8f else 9.5f) * densita
             val (x, y) = posizione(i)
             // linea sottile dal centro
             pennello.style = Paint.Style.STROKE
@@ -102,15 +104,35 @@ class MenuRadialeView(
             canvas.drawText(voci[i], x, y - altezza / 2f, pennelloTesto)
         }
 
-        // Centro: chiudi
+        // Centro: nome e spiegazione della voce sotto il dito, altrimenti "chiudi"
+        val rCentro = (raggioMenu() * apertura - rv * 1.15f).coerceAtLeast(22f * densita)
         pennello.style = Paint.Style.STROKE
         pennello.strokeWidth = 1.3f * densita
         pennello.color = conAlfa(oro, (200 * apertura).toInt())
-        canvas.drawCircle(cx(), cy(), 22f * densita, pennello)
+        canvas.drawCircle(cx(), cy(), if (premuta >= 0) rCentro * 0.92f else 22f * densita, pennello)
         pennelloTesto.color = conAlfa(oro, (255 * apertura).toInt())
-        pennelloTesto.textSize = 8.5f * densita
-        val altezza = pennelloTesto.descent() + pennelloTesto.ascent()
-        canvas.drawText("CHIUDI", cx(), cy() - altezza / 2f, pennelloTesto)
+        if (premuta >= 0) {
+            pennelloTesto.textSize = 12f * densita
+            canvas.drawText(voci[premuta], cx(), cy() - 6f * densita, pennelloTesto)
+            val spiegazione = descrizioni.getOrNull(premuta).orEmpty()
+            if (spiegazione.isNotEmpty()) {
+                pennelloTesto.textSize = 9f * densita
+                pennelloTesto.color = conAlfa(bianco, (220 * apertura).toInt())
+                val larghezza = rCentro * 1.6f
+                val righe = ArrayList<String>()
+                var riga = ""
+                for (parola in spiegazione.split(" ")) {
+                    val prova = if (riga.isEmpty()) parola else "$riga $parola"
+                    if (pennelloTesto.measureText(prova) > larghezza && riga.isNotEmpty()) { righe.add(riga); riga = parola } else riga = prova
+                }
+                if (riga.isNotEmpty()) righe.add(riga)
+                righe.take(3).forEachIndexed { k, r -> canvas.drawText(r, cx(), cy() + (12f + k * 12f) * densita, pennelloTesto) }
+            }
+        } else {
+            pennelloTesto.textSize = 8.5f * densita
+            val altezza = pennelloTesto.descent() + pennelloTesto.ascent()
+            canvas.drawText("CHIUDI", cx(), cy() - altezza / 2f, pennelloTesto)
+        }
     }
 
     private fun vocePremuta(x: Float, y: Float): Int {

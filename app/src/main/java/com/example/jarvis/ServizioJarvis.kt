@@ -507,6 +507,7 @@ class ServizioJarvis : Service() {
             return
         }
         Statistiche.attivazione(this)
+        try { Suoni.sveglia(this) } catch (e: Throwable) { }
         cervello.chiParla = chi
         principale.post { if (!occupato) avviaComando() }
     }

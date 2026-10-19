@@ -74,6 +74,35 @@ class ReattoreView(context: Context) : View(context) {
     var spessore = 1f           // da 0.5 a 2.5
     var tacche = true
 
+    // ---------- Jarvis vivo ----------
+    /** calmo, allegro, curioso, assonnato, offeso: cambia ritmo e colori del cuore. */
+    var umore = "calmo"
+    /** Inclinazione del telefono da -1 a 1: la sfera rotola da quella parte. */
+    @Volatile var inclinaX = 0f
+    @Volatile var inclinaY = 0f
+    /** A faccia in giù: Jarvis dorme. */
+    var dorme = false
+    private var spostX = 0f
+    private var spostY = 0f
+    private var agitazione = 0f
+
+    /** Scossa del telefono: la sfera trema e gira. */
+    fun scuoti() {
+        agitazione = 1.4f
+        velocitaGiro += 900f
+        invalidate()
+    }
+
+    /** Festa di colori (trofei, vittorie). */
+    fun festeggia(secondi: Float = 4f) {
+        festa = secondi
+        velocitaGiro += 540f
+        invalidate()
+    }
+
+    /** Menu a gesti: "su", "giu", "sinistra", "destra" quando si scorre con decisione sulla sfera. */
+    var alGesto: ((String) -> Unit)? = null
+
     /** Chiamato quando l'utente cambia lo zoom con le dita (per salvarlo). */
     var alCambioZoom: ((Float) -> Unit)? = null
 
@@ -198,6 +227,17 @@ class ReattoreView(context: Context) : View(context) {
         }
 
         override fun onFling(e1: MotionEvent?, e2: MotionEvent, vx: Float, vy: Float): Boolean {
+            val gesto = alGesto
+            if (gesto != null && e1 != null) {
+                val dx = e2.x - e1.x
+                val dy = e2.y - e1.y
+                val lungo = maxOf(abs(dx), abs(dy))
+                val corto = minOf(abs(dx), abs(dy))
+                if (lungo > 70f * densita && corto < lungo * 0.55f && hypot(vx, vy) > 600f) {
+                    gesto(if (abs(dx) > abs(dy)) (if (dx > 0) "destra" else "sinistra") else (if (dy > 0) "giu" else "su"))
+                    return true
+                }
+            }
             val cx = centroX()
             val cy = centroY()
             // componente tangenziale della velocità: decide il verso della rotazione
@@ -233,7 +273,15 @@ class ReattoreView(context: Context) : View(context) {
         tempoPrecedente = adesso
         val t = (adesso % 1_000_000_000_000L) / 1e9f
 
-        val velocita = velocitaBase * (if (ridotto) 0.5f else 1f) * when (stato) {
+        val ritmoUmore = when {
+            dorme -> 0.15f
+            umore == "allegro" -> 1.5f
+            umore == "assonnato" -> 0.45f
+            umore == "offeso" -> 0.7f
+            umore == "curioso" -> 1.15f
+            else -> 1f
+        }
+        val velocita = ritmoUmore * velocitaBase * (if (ridotto) 0.5f else 1f) * when (stato) {
             Stato.RIPOSO -> 1f
             Stato.ASCOLTO -> 1.5f
             Stato.PENSIERO -> 4f
@@ -255,6 +303,16 @@ class ReattoreView(context: Context) : View(context) {
         val p = palette
         var anello = mescola(p.accento, p.ascolto, miscelaAscolto)
         var anelloChiaro = mescola(p.accentoChiaro, p.ascolto, miscelaAscolto)
+        val spento = when {
+            dorme -> 0.65f
+            umore == "offeso" -> 0.45f
+            umore == "assonnato" -> 0.35f
+            else -> 0f
+        }
+        if (spento > 0f) {
+            anello = mescola(anello, p.tenue, spento)
+            anelloChiaro = mescola(anelloChiaro, p.tenue, spento * 0.8f)
+        }
         if (festa > 0f) {
             // festa: i colori girano su tutto l'arcobaleno
             anello = Color.HSVToColor(floatArrayOf((t * 120f) % 360f, 0.75f, 1f))
@@ -267,9 +325,21 @@ class ReattoreView(context: Context) : View(context) {
 
         // spazio per la scritta sotto il cuore
         val spazioTesto = 26f * densita
-        val cx = width / 2f
-        val cy = (height - spazioTesto) / 2f
-        val r = min(width.toFloat(), height - spazioTesto) / 2f * 0.9f * scala
+        // inclinazione (la sfera rotola), curiosità (ondeggia) e scossa (trema)
+        val dondolio = if (umore == "curioso" && !dorme) sin(t * 1.3f) * 0.12f else 0f
+        spostX += (inclinaX + dondolio - spostX) * min(1f, dt * 4f)
+        spostY += (inclinaY - spostY) * min(1f, dt * 4f)
+        var tremaX = 0f
+        var tremaY = 0f
+        if (agitazione > 0f) {
+            agitazione -= dt
+            tremaX = sin(t * 71f) * 9f * densita * agitazione
+            tremaY = cos(t * 53f) * 9f * densita * agitazione
+        }
+        val r = min(width.toFloat(), height - spazioTesto) / 2f * 0.9f * scala *
+            (if (umore == "allegro" && !dorme) 1.04f else if (dorme || umore == "assonnato") 0.94f else 1f)
+        val cx = width / 2f + spostX * width * 0.22f + tremaX
+        val cy = (height - spazioTesto) / 2f + spostY * height * 0.18f + tremaY
         val sp = spessore * densita
 
         disegnaSfondo(canvas, cx, cy, r, anello, t)
@@ -430,10 +500,15 @@ class ReattoreView(context: Context) : View(context) {
         }
 
         // ---- 8. scritta di stato ----
-        if (testoCentrale.isNotEmpty()) {
+        if (testoCentrale.isNotEmpty() || dorme) {
             pennelloTesto.color = if (stato == Stato.ASCOLTO) p.ascolto else p.accento
             pennelloTesto.textSize = 11f * densita
-            canvas.drawText(if (festa > 0f) "★ FESTA ★" else testoCentrale, cx, height - 8f * densita, pennelloTesto)
+            val scritta = when {
+                festa > 0f -> "★ FESTA ★"
+                dorme -> "Z z z  ·  DORMO"
+                else -> testoCentrale
+            }
+            canvas.drawText(scritta, width / 2f, height - 8f * densita, pennelloTesto)
         }
 
         // Prossimo fotogramma: 30 al secondo (15 con animazioni ridotte) per consumare poco.
@@ -462,6 +537,21 @@ class ReattoreView(context: Context) : View(context) {
                     val scintilla = 0.4f + 0.6f * abs(sin(t * (0.5f + luce * 2f) + luce * 10f))
                     pennello.color = conAlfa(palette.testo, (40 + 150 * scintilla * luce).toInt())
                     canvas.drawCircle(sx * width, sy * height, (0.6f + luce * 1.2f) * densita, pennello)
+                }
+            }
+            "onde" -> {
+                pennello.shader = null
+                pennello.style = Paint.Style.STROKE
+                pennello.strokeWidth = 0.8f * densita
+                val passo = 34f * densita
+                val inizio = (t * 8f * densita) % passo
+                val massimo = hypot(width.toFloat(), height.toFloat())
+                var raggioOnda = inizio
+                while (raggioOnda < massimo) {
+                    val sbiadito = 1f - raggioOnda / massimo
+                    pennello.color = conAlfa(anello, (34 * sbiadito).toInt())
+                    canvas.drawCircle(cx, cy, raggioOnda, pennello)
+                    raggioOnda += passo
                 }
             }
         }
