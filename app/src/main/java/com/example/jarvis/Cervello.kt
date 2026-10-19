@@ -44,11 +44,11 @@ class Cervello private constructor(private val ctx: Context) {
         const val MODELLO_PREDEFINITO = "gemini-3.5-flash-lite"
         const val CITTA_PREDEFINITA = "Roma"
 
-        private const val MAX_RICORDI = 300
-        private const val MAX_LEZIONI = 80
-        private const val MAX_PASSAGGI = 25
-        private const val MAX_DIARIO = 300
-        private const val RIFLESSIONE_OGNI = 6
+        internal const val MAX_RICORDI = 300
+        internal const val MAX_LEZIONI = 80
+        internal const val MAX_PASSAGGI = 25
+        internal const val MAX_DIARIO = 300
+        internal const val RIFLESSIONE_OGNI = 6
 
         @Volatile private var istanza: Cervello? = null
 
@@ -73,11 +73,18 @@ class Cervello private constructor(private val ctx: Context) {
     @Volatile var uscita: Uscita? = null
     val prefs: SharedPreferences = ctx.getSharedPreferences("jarvis", Context.MODE_PRIVATE)
 
-    private val principale = Handler(Looper.getMainLooper())
+    // ---------- i moduli del cervello ----------
+    internal val ia by lazy { ClientIA(this) }
+    internal val memoria by lazy { Memoria(this) }
+    internal val telefono by lazy { AzioniTelefono(this) }
+    internal val contenuti by lazy { Contenuti(this) }
+    internal val prompt by lazy { PromptJarvis(this) }
+
+    internal val principale = Handler(Looper.getMainLooper())
     private val blocco = Any()
-    private val messaggi = JSONArray()        // conversazione con Gemini (formato OpenAI)
+    internal val messaggi = JSONArray()        // conversazione con Gemini (formato OpenAI)
     private val messaggiClaude = JSONArray()  // conversazione con Claude (formato Anthropic)
-    private val strumentiUsati = mutableListOf<String>()
+    internal val strumentiUsati = mutableListOf<String>()
     private val fontiUltimaRisposta = mutableListOf<String>()
 
     val PLUGIN = listOf(
@@ -138,20 +145,15 @@ class Cervello private constructor(private val ctx: Context) {
 
     fun pluginAttivo(id: String) = prefs.getBoolean("plugin_$id", true)
 
-    private fun strumentoAttivo(nome: String): Boolean {
+    internal fun strumentoAttivo(nome: String): Boolean {
         val plugin = PLUGIN.firstOrNull { nome in it.strumenti } ?: return true
         return pluginAttivo(plugin.id)
     }
 
-    fun usaClaude() = prefs.getString("fornitore", "gemini") == "claude"
-
-    fun chiaveAttiva(): String =
-        (if (usaClaude()) Cassaforte.leggi(prefs, "chiave_claude") else Cassaforte.leggi(prefs, "api_key")).trim()
-
-    private val integrazioni by lazy { Integrazioni(ctx, prefs, ::avvia, ::chiediPermessoGenerico) }
-    private val casa by lazy { Casa(prefs) }
+    internal val integrazioni by lazy { Integrazioni(ctx, prefs, ::avvia, ::chiediPermessoGenerico) }
+    internal val casa by lazy { Casa(prefs) }
     private val posta by lazy { Posta(prefs) }
-    private val pc by lazy { PontePc(prefs) }
+    internal val pc by lazy { PontePc(prefs) }
 
     /** Chiede un permesso dalla schermata (se è aperta) e restituisce cosa dire all'utente. */
     private fun chiediPermessoGenerico(permesso: String, motivo: String): String {
@@ -166,7 +168,7 @@ class Cervello private constructor(private val ctx: Context) {
     }
 
     /** Da dove aprire le altre app: il servizio di accessibilità può farlo anche in background. */
-    private fun lanciatore(): Context = AccessibilitaJarvis.istanza ?: ctx
+    internal fun lanciatore(): Context = AccessibilitaJarvis.istanza ?: ctx
 
     // ================================================================
     //  FUNZIONI PER LA SCHERMATA E IL SERVIZIO
@@ -174,8 +176,7 @@ class Cervello private constructor(private val ctx: Context) {
 
     // Risposta in corso: dove mandare i pezzi di testo man mano che arrivano (per parlare subito)
     @Volatile private var pezzoAttuale: ((String) -> Unit)? = null
-    @Volatile private var pezziInviati = false
-    @Volatile private var richiestaCorrente = ""
+    @Volatile internal var richiestaCorrente = ""
     /** Chi sta parlando (riconosciuto dalla voce): vuoto per l'utente principale, altrimenti il nome del familiare. */
     @Volatile var chiParla = ""
 
@@ -326,263 +327,6 @@ class Cervello private constructor(private val ctx: Context) {
         salvaConversazioni()
     }
 
-    fun numeroRichieste() = leggiDiario().length()
-
-    /** Il diario intero (per le statistiche). */
-    fun diario(): JSONArray = leggiDiario()
-
-    /** Le ultime richieste del diario, dalla più recente, per la schermata Cronologia. */
-    fun ultimeRichieste(quante: Int): String {
-        val diario = leggiDiario()
-        if (diario.length() == 0) return "Ancora nessuna richiesta."
-        val righe = mutableListOf<String>()
-        for (i in diario.length() - 1 downTo maxOf(0, diario.length() - quante)) {
-            val v = diario.optJSONObject(i) ?: continue
-            righe.add("${v.optString("t")}\n› ${v.optString("d")}\n${v.optString("r")}")
-        }
-        return righe.joinToString("\n\n")
-    }
-
-    /** Il carattere di Jarvis, scelto nelle impostazioni. */
-    private fun personalita(): String {
-        val stile = prefs.getString("personalita", "maggiordomo") ?: "maggiordomo"
-        val appellativo = (prefs.getString("appellativo", "signore") ?: "").trim()
-        val nome = if (appellativo.isNotEmpty()) " e chiamalo \"$appellativo\"" else ""
-        return when (stile) {
-            "formale" ->
-                "Sei formale, preciso ed essenziale, come un assistente professionale. " +
-                    "Dai del lei all'utente$nome. Niente battute: vai dritto al punto con cortesia."
-            "amichevole" ->
-                "Sei amichevole, spontaneo e caloroso, come un amico molto in gamba. " +
-                    "Dai del tu all'utente" + (if (appellativo.isNotEmpty()) " e ogni tanto chiamalo \"$appellativo\"" else "") +
-                    ". Puoi scherzare in modo leggero."
-            else ->
-                "Hai la personalità di un maggiordomo digitale all'inglese: elegante, calmo, impeccabilmente " +
-                    "cortese e con un umorismo asciutto e sottile. Dai del lei all'utente$nome. " +
-                    "Ogni tanto, quando viene naturale, aggiungi una breve battuta ironica e garbata, " +
-                    "per esempio commentando con eleganza un orario insolito o una richiesta curiosa. " +
-                    "Mai battute su cose serie, tristi o urgenti, e mai più di una per risposta. " +
-                    "Frasi brevi, precise e raffinate."
-        }
-    }
-
-    // ================================================================
-    //  PROMPT DI SISTEMA: personalità + memoria di fondo
-    // ================================================================
-
-    private fun promptDiSistema(): String {
-        val adesso = SimpleDateFormat("EEEE d MMMM yyyy, 'ore' HH:mm", Locale.ITALIAN).format(Date())
-        val citta = prefs.getString("citta", CITTA_PREDEFINITA) ?: CITTA_PREDEFINITA
-        val tuttiRicordi = leggiLista("memoria")
-        val ricordi = ricordiPertinenti(tuttiRicordi)
-        val lezioni = ricordiPertinenti(leggiLista("lezioni"), 30)
-        val routine = leggiRoutine()
-        val riassunto = prefs.getString("riassunto", "") ?: ""
-        val pluginAttivi = PLUGIN.filter { pluginAttivo(it.id) && (it.id != "ricerca" || usaClaude()) }
-
-        val p = StringBuilder()
-        p.append("Sei ${nomeAssistente()}, l'assistente vocale personale dell'utente, sul suo telefono Android. ")
-        p.append("Rispondi sempre in italiano, con frasi brevi e naturali da leggere ad alta voce: ")
-        p.append("niente elenchi, niente asterischi, niente emoji, niente link. ")
-        p.append("Usa gli strumenti quando servono per agire sul telefono e non inventare risultati. ")
-        p.append("Adesso è $adesso. La città predefinita per il meteo è $citta.\n\n")
-        p.append("PERSONALITÀ\n").append(personalita()).append("\n\n")
-        if (chiParla.isNotEmpty()) {
-            p.append("CHI PARLA: in questo momento ti parla $chiParla, un familiare dell'utente (riconosciuto dalla voce). ")
-            p.append("Rivolgiti a $chiParla per nome; i ricordi senza [nome] riguardano l'utente principale, quelli con [$chiParla] riguardano lui o lei.\n\n")
-        }
-        if (privata) {
-            p.append("MODALITÀ PRIVATA ATTIVA: non salvare ricordi, lezioni o routine; quando l'utente vuole uscire usa modalita_privata.\n\n")
-        }
-        if (prefs.getBoolean("in_auto", false)) {
-            p.append("SITUAZIONE: l'utente è IN AUTO e sta guidando. Rispondi con al massimo due frasi brevi, niente domande ")
-            p.append("di approfondimento, non chiedergli di guardare o toccare lo schermo. Per la strada usa naviga.\n\n")
-        }
-        p.append("STILE DI CONVERSAZIONE\n")
-        p.append("- Sii partecipe e curioso. Quando ha senso, fai UNA breve domanda di approfondimento o proponi un passo ")
-        p.append("successivo utile; non farlo quando l'utente vuole solo un comando veloce (sveglia, torcia, volume).\n")
-        p.append("- Collega le risposte a ciò che sai di lui e alle conversazioni passate.\n")
-        p.append("- Quando nella conversazione emergono gusti, abitudini, progetti, persone importanti o opinioni, salvali con ricorda; ")
-        p.append("quando ti corregge o preferisce un modo diverso, salva una lezione con impara_lezione.\n")
-        p.append("- Alcune azioni rispondono \"NON ANCORA ESEGUITO\": in quel caso spiega all'utente cosa farai e chiedi conferma. ")
-        p.append("Chiama conferma_azione solo DOPO la sua risposta, mai nello stesso turno in cui hai chiesto.\n\n")
-
-        p.append("COME MIGLIORARE DA SOLO\n")
-        p.append("- Quando scopri un fatto stabile o una preferenza dell'utente (nome, persone care, gusti, ")
-        p.append("abitudini, luoghi, app preferite), salvalo subito con ricorda, senza chiedere e senza annunciarlo.\n")
-        p.append("- Quando l'utente ti corregge, o uno strumento fallisce e trovi il modo giusto, ")
-        p.append("salva una regola pratica con impara_lezione.\n")
-        p.append("- Se l'utente ripete spesso la stessa sequenza di azioni, proponigli una routine ")
-        p.append("e, se accetta, creala con crea_routine.\n")
-        p.append("- Quando l'utente dice la frase di una routine, esegui le sue istruzioni con gli strumenti.\n")
-        p.append("- Per domande su cosa ti ha chiesto in passato usa cerca_nel_diario.\n")
-        if (usaClaude() && pluginAttivo("ricerca")) {
-            p.append("- Per notizie, fatti recenti, prezzi, risultati sportivi o cose che possono essere cambiate, ")
-            p.append("usa la ricerca web.\n")
-        }
-        if (pluginAttivo("notifiche")) {
-            p.append("- Per i messaggi ricevuti usa leggi_notifiche; per rispondere a un messaggio usa rispondi_messaggio.\n")
-        }
-        if (pluginAttivo("controllo")) {
-            if (AccessibilitaJarvis.istanza != null) {
-                p.append("- Per fare qualcosa in un'altra app: aprila con apri_app e NON fermarti lì. Usa leggi_schermo, poi tocca, ")
-                p.append("scrivi_testo e scorri, rileggendo lo schermo dopo ogni passo, finché la richiesta è completata. ")
-                p.append("Per WhatsApp usa invia_whatsapp.\n")
-            } else {
-                p.append("- Il controllo delle app NON è attivo: puoi aprire le app ma non toccare o scrivere al loro interno. ")
-                p.append("Se serve, spiega all'utente di attivarlo da SISTEMA, ATTIVO, Controllo delle app.\n")
-            }
-        }
-        if (pluginAttivo("audio")) {
-            p.append("- Per mettere musica (\"metti Vasco\", \"fammi sentire jazz\") usa riproduci, non controlla_musica.\n")
-        }
-        if (pluginAttivo("calendario")) {
-            p.append("- Per cancellare appuntamenti usa cancella_appuntamenti: NON elencarli, di' solo quanti sono e segui le due conferme richieste. ")
-            p.append("Per ricominciare da zero puoi creare un calendario nuovo con crea_calendario.\n")
-        }
-        if (pluginAttivo("notizie")) {
-            p.append("- Per le notizie usa notizie (categoria cronaca, politica, mondo, economia, sport, tecnologia, oppure un argomento o una città). ")
-            p.append("Riassumile a voce in modo discorsivo, al massimo 5, citando la fonte (\"secondo l'ANSA\"), senza leggere i titoli parola per parola. ")
-            p.append("Per fatti, persone, luoghi o cose che possono essere cambiate usa cerca_informazioni.\n")
-        }
-        if (pluginAttivo("calendario")) {
-            p.append("- Per gli impegni usa leggi_calendario e crea_appuntamento; calcola tu la data esatta a partire da oggi.\n")
-        }
-        if (pluginAttivo("promemoria")) {
-            p.append("- Per \"ricordamelo\" usa promemoria (orario, anche ripetuto) o promemoria_luogo (quando arrivo o esco da un posto).\n")
-        }
-        if (pluginAttivo("vista")) {
-            p.append("- Se l'utente ti chiede di guardare, leggere o tradurre qualcosa che ha davanti, usa guarda (una foto). ")
-            p.append("Se vuole mostrarti qualcosa dal vivo o farti più domande su ciò che inquadra, usa vista_dal_vivo.\n")
-        }
-        if (pluginAttivo("mattino")) {
-            p.append("- Per il riepilogo del mattino usa riepilogo_giornata e raccontalo come un buongiorno, in poche frasi.\n")
-        }
-        p.append("- Apri app, chiama e invia messaggi direttamente, senza chiedere conferma.\n")
-        if (pluginAttivo("casa")) {
-            p.append("- Per luci, prese, termostato, tapparelle e altri dispositivi di casa usa casa_comando (prima casa_dispositivi se non sai il nome esatto); ")
-            p.append("per le azioni personalizzate dell'utente usa esegui_scorciatoia.\n")
-        }
-        if (pluginAttivo("email")) {
-            p.append("- Per le email usa leggi_email, invia_email e rispondi_email. Riassumi le email a voce, non leggerle parola per parola.\n")
-        }
-        if (pluginAttivo("pc")) {
-            p.append("- Per il computer dell'utente usa pc (aprire programmi o siti, volume, musica, bloccare, spegnere, scrivere testo) e pc_accendi per accenderlo.\n")
-        }
-        if (pluginAttivo("automazioni")) {
-            p.append("- Per \"quando succede X fai Y\" (arrivo o uscita da un luogo, un orario ricorrente, batteria bassa, auto, cuffie, ricarica) usa crea_automazione: ")
-            p.append("le istruzioni sono una frase che eseguirai tu quando scatta.\n")
-        }
-        if (pluginAttivo("sistema")) p.append("- Per non disturbare, silenzioso, vibrazione e luminosità usa non_disturbare, suoneria e luminosita.\n")
-        if (pluginAttivo("liste")) p.append("- Per la lista della spesa e altre liste usa lista_aggiungi, lista_leggi, lista_togli e lista_invia.\n")
-        if (pluginAttivo("traduttore")) p.append("- Se l'utente deve parlare con qualcuno in un'altra lingua, apri il traduttore simultaneo con traduttore.\n")
-        p.append("- Se l'utente chiede di non ricordare questa conversazione, usa modalita_privata.\n")
-        if (pluginAttivo("archivio")) {
-            val documenti = Archivio.numero(ctx)
-            p.append("- L'utente può caricare foto e documenti con il tasto + accanto al campo di testo. ")
-            if (documenti > 0) p.append("Nell'archivio ci sono $documenti documenti: per domande su bollette, contratti, ricevute, referti o altri documenti usa archivio_cerca e poi archivio_leggi.\n")
-            else p.append("L'archivio dei documenti per ora è vuoto.\n")
-        }
-        p.append("\nRICHIESTE IN PIÙ PASSAGGI\n")
-        p.append("- Se la richiesta ha più parti (per esempio \"prenota un tavolo e scrivilo a Marco\"), dividila in passi ed eseguili tutti, uno alla volta.\n")
-        p.append("- Dopo ogni azione su un'altra app guarda lo SCHERMO DOPO L'AZIONE che ricevi: controlla che il passo sia riuscito prima di andare avanti.\n")
-        p.append("- Se un passo non riesce, prova un'altra strada (scorri, cerca il pulsante con un altro nome, torna indietro, usa attendi se l'app sta caricando).\n")
-        p.append("- Non fermarti a metà e non dire \"fatto\" finché tutte le parti sono completate; alla fine riassumi in una frase cosa hai fatto.\n")
-        p.append("- ACQUISTI: prima di comprare, pagare, ordinare o abbonarti a qualcosa chiedi SEMPRE due conferme ")
-        p.append("all'utente (cosa, prezzo se lo vedi, e poi \"è sicuro?\"). Il tocco su pulsanti di pagamento richiede comunque conferma.\n")
-        p.append("- Non salvare mai password, codici o dati bancari e non scriverli nelle app.\n\n")
-
-        p.append("MEMORIA DI FONDO (usala come contesto, in modo naturale, senza ripeterla)\n")
-        if (ricordi.isNotEmpty()) p.append("Cose che sai sull'utente: ").append(ricordi.joinToString("; ")).append(".\n")
-        if (lezioni.isNotEmpty()) p.append("Lezioni imparate: ").append(lezioni.joinToString("; ")).append(".\n")
-        if (routine.length() > 0) {
-            p.append("Routine dell'utente:\n")
-            for (i in 0 until routine.length()) {
-                val r = routine.getJSONObject(i)
-                p.append("- ${r.optString("nome")}: quando dice \"${r.optString("frase")}\" fai questo: ${r.optString("istruzioni")}\n")
-            }
-        }
-        if (riassunto.isNotBlank()) p.append("Riassunto delle conversazioni passate: $riassunto\n")
-        val simili = richiestePassateSimili()
-        if (simili.isNotBlank()) p.append("Richieste passate simili a quella di adesso: $simili\n")
-        if (tuttiRicordi.size > ricordi.size) {
-            p.append("Qui vedi solo i ricordi pertinenti (${ricordi.size} su ${tuttiRicordi.size}): se ti serve altro, usa cerca_ricordi.\n")
-        }
-        val luoghi = integrazioni.descriviLuoghi()
-        if (luoghi.isNotBlank()) p.append("Luoghi salvati: $luoghi.\n")
-        if (ricordi.isEmpty() && lezioni.isEmpty() && routine.length() == 0 && riassunto.isBlank()) {
-            p.append("Ancora vuota: è una delle prime conversazioni.\n")
-        }
-
-        p.append("\nPlugin attivi: ").append(pluginAttivi.joinToString(", ") { it.nome }).append(".")
-        return p.toString()
-    }
-
-    // ================================================================
-    //  MEMORIA PERTINENTE: solo i ricordi che servono per la richiesta di adesso
-    // ================================================================
-
-    private val PAROLE_VUOTE = setOf(
-        "della", "delle", "degli", "dello", "nella", "nelle", "sono", "come", "cosa", "anche", "questo", "questa",
-        "quello", "quella", "perché", "quando", "dove", "allora", "molto", "tutto", "tutti", "fammi", "dimmi",
-        "puoi", "vorrei", "voglio", "jarvis", "utente", "sempre", "ogni", "essere", "fare", "avere", "dopo", "prima"
-    )
-
-    private fun radici(testo: String): Set<String> = testo.lowercase(Locale.ITALIAN)
-        .split(Regex("[^\\p{L}\\p{N}]+"))
-        .filter { it.length > 3 && it !in PAROLE_VUOTE }
-        .map { it.take(5) }
-        .toSet()
-
-    /** Fatti di base da avere sempre presenti (nome, famiglia, casa, lavoro). */
-    private val PAROLE_BASE = listOf("chiama", "nome", "vive", "abita", "lavor", "moglie", "marito", "figli", "compagn", "fidanzat", "preferisc", "non vuole", "odia")
-
-    private fun ricordiPertinenti(tutti: List<String>, massimo: Int = 25): List<String> {
-        if (tutti.size <= massimo) return tutti
-        val chiave = radici(richiestaCorrente + " " + ultimaDomandaPrecedente())
-        val pertinenti = tutti.map { it to radici(it).count { r -> r in chiave } }
-            .filter { it.second > 0 }
-            .sortedByDescending { it.second }
-            .take(massimo / 2)
-            .map { it.first }
-        val base = tutti.filter { r -> PAROLE_BASE.any { r.lowercase(Locale.ITALIAN).contains(it) } }.take(8)
-        val recenti = tutti.takeLast(6)
-        return (base + pertinenti + recenti).distinct()
-    }
-
-    private fun ultimaDomandaPrecedente(): String {
-        val diario = leggiDiario()
-        return diario.optJSONObject(diario.length() - 1)?.optString("d") ?: ""
-    }
-
-    /** Le 3 richieste del diario più simili a quella di adesso (escluse le ultimissime, già nella conversazione). */
-    private fun richiestePassateSimili(): String {
-        val chiave = radici(richiestaCorrente)
-        if (chiave.size < 2) return ""
-        val diario = leggiDiario()
-        val fine = (diario.length() - 6).coerceAtLeast(0)
-        val trovate = (0 until fine).mapNotNull { diario.optJSONObject(it) }
-            .map { it to radici(it.optString("d")).count { r -> r in chiave } }
-            .filter { it.second >= 2 }
-            .sortedByDescending { it.second }
-            .take(3)
-        return trovate.joinToString("; ") { (v, _) -> "${v.optString("t")} \"${v.optString("d")}\" → ${v.optString("r").take(100)}" }
-    }
-
-    private fun cercaRicordi(testo: String): String {
-        val chiave = radici(testo)
-        val tutti = leggiLista("memoria") + leggiLista("lezioni")
-        val trovati = tutti.filter { r -> chiave.isEmpty() || radici(r).any { it in chiave } || r.contains(testo, ignoreCase = true) }
-        return if (trovati.isEmpty()) "Non ho ricordi su \"$testo\"." else trovati.take(20).joinToString("; ")
-    }
-
-    // ================================================================
-    //  CERVELLO CLAUDE (API nativa di Anthropic)
-    // ================================================================
-
-    private fun modelloClaude() =
-        (prefs.getString("modello_claude", MODELLO_CLAUDE_PREDEFINITO) ?: MODELLO_CLAUDE_PREDEFINITO).trim()
-
     /** Se la conversazione salvata non è più valida, la azzera e riprova una volta. */
     private fun conversaClaudeConRecupero(testo: String): String = try {
         conversaClaude(testo)
@@ -725,149 +469,6 @@ class Cervello private constructor(private val ctx: Context) {
         return postClaude(corpo)
     }
 
-    /** Risposta di Claude in streaming: il testo arriva a pezzi e Jarvis inizia a parlare subito. */
-    private fun postClaudeFlusso(corpo: JSONObject, alPezzo: (String) -> Unit): JSONObject {
-        val chiave = Cassaforte.leggi(prefs, "chiave_claude").trim()
-        val connessione = URL(URL_CLAUDE).openConnection() as HttpURLConnection
-        connessione.requestMethod = "POST"
-        connessione.connectTimeout = 15000
-        connessione.readTimeout = 90000
-        connessione.doOutput = true
-        connessione.setRequestProperty("Content-Type", "application/json; charset=utf-8")
-        connessione.setRequestProperty("Accept", "text/event-stream")
-        connessione.setRequestProperty("x-api-key", chiave)
-        connessione.setRequestProperty("anthropic-version", "2023-06-01")
-        val richiesta = JSONObject(corpo.toString()).put("stream", true)
-        connessione.outputStream.use { it.write(richiesta.toString().toByteArray(Charsets.UTF_8)) }
-
-        val codice = connessione.responseCode
-        if (codice !in 200..299) {
-            val testo = connessione.errorStream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() } ?: ""
-            connessione.disconnect()
-            throw erroreClaude(codice, testo)
-        }
-        val blocchi = java.util.TreeMap<Int, JSONObject>()
-        val jsonParziali = HashMap<Int, StringBuilder>()
-        var motivo = ""
-        try {
-            connessione.inputStream.bufferedReader(Charsets.UTF_8).use { lettore ->
-                while (true) {
-                    val riga = lettore.readLine() ?: break
-                    if (!riga.startsWith("data:")) continue
-                    val evento = try { JSONObject(riga.substring(5).trim()) } catch (e: Exception) { continue }
-                    val indice = evento.optInt("index", 0)
-                    when (evento.optString("type")) {
-                        "content_block_start" -> {
-                            val b = JSONObject(evento.optJSONObject("content_block")?.toString() ?: "{}")
-                            blocchi[indice] = b
-                            if (b.optString("type") == "tool_use" || b.optString("type") == "server_tool_use") {
-                                jsonParziali[indice] = StringBuilder()
-                            }
-                        }
-                        "content_block_delta" -> {
-                            val b = blocchi[indice] ?: continue
-                            val d = evento.optJSONObject("delta") ?: continue
-                            when (d.optString("type")) {
-                                "text_delta" -> {
-                                    val t = d.optString("text")
-                                    b.put("text", b.optString("text") + t)
-                                    if (t.isNotEmpty()) {
-                                        pezziInviati = true
-                                        alPezzo(t)
-                                    }
-                                }
-                                "input_json_delta" -> jsonParziali[indice]?.append(d.optString("partial_json"))
-                                "citations_delta" -> {
-                                    val elenco = b.optJSONArray("citations") ?: JSONArray().also { b.put("citations", it) }
-                                    d.optJSONObject("citation")?.let { elenco.put(it) }
-                                }
-                                "thinking_delta" -> b.put("thinking", b.optString("thinking") + d.optString("thinking"))
-                                "signature_delta" -> b.put("signature", d.optString("signature"))
-                            }
-                        }
-                        "content_block_stop" -> {
-                            val parziale = jsonParziali.remove(indice)
-                            val b = blocchi[indice]
-                            if (parziale != null && b != null) {
-                                b.put("input", if (parziale.isBlank()) JSONObject() else try {
-                                    JSONObject(parziale.toString())
-                                } catch (e: Exception) {
-                                    JSONObject()
-                                })
-                            }
-                        }
-                        "message_delta" -> {
-                            val m = evento.optJSONObject("delta")?.optString("stop_reason") ?: ""
-                            if (m.isNotEmpty() && m != "null") motivo = m
-                        }
-                        "error" -> throw ErroreApi(529, "i server di Claude sono occupati, riprova tra poco.")
-                    }
-                }
-            }
-        } finally {
-            connessione.disconnect()
-        }
-        val contenuto = JSONArray()
-        for (b in blocchi.values) {
-            if (b.has("citations") && b.isNull("citations")) b.remove("citations")
-            contenuto.put(b)
-        }
-        return JSONObject().put("content", contenuto).put("stop_reason", motivo)
-    }
-
-    /** Domanda singola a Claude senza strumenti (usata per riassumere e riflettere). */
-    private fun chiamaClaudeSemplice(richiesta: String, maxToken: Int): String {
-        val modello = modelloClaude()
-        val corpo = JSONObject()
-            .put("model", modello)
-            .put("max_tokens", maxToken)
-            .put("messages", JSONArray().put(JSONObject().put("role", "user").put("content", richiesta)))
-        if (modello.contains("haiku")) corpo.put("thinking", JSONObject().put("type", "disabled"))
-        val contenuto = postClaude(corpo).optJSONArray("content") ?: return ""
-        val testo = StringBuilder()
-        for (i in 0 until contenuto.length()) {
-            val b = contenuto.getJSONObject(i)
-            if (b.optString("type") == "text") testo.append(b.optString("text"))
-        }
-        return testo.toString().trim()
-    }
-
-    private fun postClaude(corpo: JSONObject): JSONObject {
-        val chiave = Cassaforte.leggi(prefs, "chiave_claude").trim()
-        val connessione = URL(URL_CLAUDE).openConnection() as HttpURLConnection
-        connessione.requestMethod = "POST"
-        connessione.connectTimeout = 15000
-        connessione.readTimeout = 90000
-        connessione.doOutput = true
-        connessione.setRequestProperty("Content-Type", "application/json; charset=utf-8")
-        connessione.setRequestProperty("x-api-key", chiave)
-        connessione.setRequestProperty("anthropic-version", "2023-06-01")
-        connessione.outputStream.use { it.write(corpo.toString().toByteArray(Charsets.UTF_8)) }
-
-        val codice = connessione.responseCode
-        val flusso = if (codice in 200..299) connessione.inputStream else connessione.errorStream
-        val risposta = flusso?.bufferedReader(Charsets.UTF_8)?.use { it.readText() } ?: ""
-        connessione.disconnect()
-
-        if (codice !in 200..299) throw erroreClaude(codice, risposta)
-        return JSONObject(risposta)
-    }
-
-    private fun erroreClaude(codice: Int, risposta: String): ErroreApi {
-        val dettaglio = estraiErrore(risposta)
-        val credito = dettaglio.contains("credit balance", ignoreCase = true)
-        val messaggio = when {
-            credito -> "il credito API di Claude è esaurito, ricaricalo su platform.claude.com."
-            codice == 401 || codice == 403 -> "la chiave API di Claude non è valida, controllala nelle impostazioni."
-            codice == 404 -> "modello Claude non trovato, controlla il nome nelle impostazioni."
-            codice == 429 -> "troppe richieste in poco tempo, riprova tra qualche secondo."
-            codice == 529 || codice >= 500 -> "i server di Claude sono occupati, riprova tra poco."
-            else -> "errore $codice. $dettaglio"
-        }
-        val ripetibile = codice == 400 && !credito && dettaglio.contains("messages", ignoreCase = true)
-        return ErroreApi(codice, messaggio, ripetibile)
-    }
-
     // ================================================================
     //  CERVELLO GEMINI (formato compatibile OpenAI)
     // ================================================================
@@ -967,189 +568,12 @@ class Cervello private constructor(private val ctx: Context) {
         return pulito
     }
 
-    /** Domanda singola a Gemini senza strumenti (usata per riassumere e riflettere). */
-    private fun chiamaGeminiSemplice(richiesta: String): String {
-        val modello = prefs.getString("modello", MODELLO_PREDEFINITO) ?: MODELLO_PREDEFINITO
-        val corpo = JSONObject()
-            .put("model", modello)
-            .put("messages", JSONArray().put(JSONObject().put("role", "user").put("content", richiesta)))
-        val messaggio = postGemini(corpo).getJSONArray("choices").getJSONObject(0).getJSONObject("message")
-        return if (messaggio.isNull("content")) "" else messaggio.getString("content").trim()
-    }
-
-    /** Risposta di Gemini in streaming: il testo arriva a pezzi e Jarvis inizia a parlare subito. */
-    private fun postGeminiFlusso(corpo: JSONObject, alPezzo: (String) -> Unit): JSONObject {
-        val base = (prefs.getString("base_url", URL_PREDEFINITO) ?: URL_PREDEFINITO).trim().trimEnd('/')
-        val chiave = Cassaforte.leggi(prefs, "api_key").trim()
-        val connessione = URL("$base/chat/completions").openConnection() as HttpURLConnection
-        connessione.requestMethod = "POST"
-        connessione.connectTimeout = 15000
-        connessione.readTimeout = 60000
-        connessione.doOutput = true
-        connessione.setRequestProperty("Content-Type", "application/json; charset=utf-8")
-        connessione.setRequestProperty("Accept", "text/event-stream")
-        connessione.setRequestProperty("Authorization", "Bearer $chiave")
-        val richiesta = JSONObject(corpo.toString()).put("stream", true)
-        connessione.outputStream.use { it.write(richiesta.toString().toByteArray(Charsets.UTF_8)) }
-
-        val codice = connessione.responseCode
-        if (codice !in 200..299) {
-            val testo = connessione.errorStream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() } ?: ""
-            connessione.disconnect()
-            throw erroreGemini(codice, testo)
-        }
-        val testo = StringBuilder()
-        val chiamate = mutableListOf<JSONObject>()
-        val perIndice = HashMap<Int, JSONObject>()
-        var extra: Any? = null
-        try {
-            connessione.inputStream.bufferedReader(Charsets.UTF_8).use { lettore ->
-                while (true) {
-                    val riga = lettore.readLine() ?: break
-                    if (!riga.startsWith("data:")) continue
-                    val dati = riga.substring(5).trim()
-                    if (dati == "[DONE]") break
-                    if (dati.isEmpty()) continue
-                    val pezzo = try { JSONObject(dati) } catch (e: Exception) { continue }
-                    pezzo.optJSONObject("error")?.let { throw ErroreApi(500, "errore di Gemini: ${it.optString("message")}") }
-                    val delta = pezzo.optJSONArray("choices")?.optJSONObject(0)?.optJSONObject("delta") ?: continue
-                    if (delta.has("extra_content")) extra = delta.get("extra_content")
-                    val contenuto = if (delta.isNull("content")) "" else delta.optString("content")
-                    if (contenuto.isNotEmpty()) {
-                        testo.append(contenuto)
-                        pezziInviati = true
-                        alPezzo(contenuto)
-                    }
-                    val nuove = delta.optJSONArray("tool_calls") ?: continue
-                    for (i in 0 until nuove.length()) {
-                        val d = nuove.optJSONObject(i) ?: continue
-                        val id = d.optString("id")
-                        val indice = if (d.has("index")) d.optInt("index") else -1
-                        var voce: JSONObject? = if (indice >= 0) perIndice[indice] else null
-                        // stesso indice ma id diverso: è una chiamata nuova
-                        if (voce != null && id.isNotEmpty() && voce.optString("id").isNotEmpty() && voce.optString("id") != id) voce = null
-                        if (voce == null && indice < 0 && id.isNotEmpty()) voce = chiamate.firstOrNull { it.optString("id") == id }
-                        if (voce == null && indice < 0 && id.isEmpty()) voce = chiamate.lastOrNull()
-                        if (voce == null) {
-                            voce = JSONObject().put("id", id).put("type", "function")
-                                .put("function", JSONObject().put("name", "").put("arguments", ""))
-                            chiamate.add(voce)
-                            if (indice >= 0) perIndice[indice] = voce
-                        }
-                        if (id.isNotEmpty()) voce.put("id", id)
-                        d.optJSONObject("function")?.let { f ->
-                            val fn = voce.getJSONObject("function")
-                            if (f.has("name") && !f.isNull("name")) fn.put("name", fn.optString("name") + f.optString("name"))
-                            if (f.has("arguments") && !f.isNull("arguments")) fn.put("arguments", fn.optString("arguments") + f.optString("arguments"))
-                        }
-                        if (d.has("extra_content")) voce.put("extra_content", d.get("extra_content"))
-                    }
-                }
-            }
-        } finally {
-            connessione.disconnect()
-        }
-        val messaggio = JSONObject().put("role", "assistant")
-        messaggio.put("content", if (testo.isEmpty()) JSONObject.NULL else testo.toString())
-        if (chiamate.isNotEmpty()) messaggio.put("tool_calls", JSONArray(chiamate))
-        if (extra != null) messaggio.put("extra_content", extra)
-        return messaggio
-    }
-
-    private fun erroreGemini(codice: Int, risposta: String) = ErroreApi(
-        codice,
-        when (codice) {
-            400 -> "richiesta non valida. ${estraiErrore(risposta)}"
-            401, 403 -> "la chiave API non è valida, controllala nelle impostazioni."
-            404 -> "modello o indirizzo non trovato, controlla le impostazioni."
-            429 -> "ho raggiunto il limite di richieste gratuite, riprova tra un po'."
-            else -> "errore $codice. ${estraiErrore(risposta)}"
-        }
-    )
-
-    private fun postGemini(corpo: JSONObject): JSONObject {
-        val base = (prefs.getString("base_url", URL_PREDEFINITO) ?: URL_PREDEFINITO).trim().trimEnd('/')
-        val chiave = Cassaforte.leggi(prefs, "api_key").trim()
-        val connessione = URL("$base/chat/completions").openConnection() as HttpURLConnection
-        connessione.requestMethod = "POST"
-        connessione.connectTimeout = 15000
-        connessione.readTimeout = 60000
-        connessione.doOutput = true
-        connessione.setRequestProperty("Content-Type", "application/json; charset=utf-8")
-        connessione.setRequestProperty("Authorization", "Bearer $chiave")
-        connessione.outputStream.use { it.write(corpo.toString().toByteArray(Charsets.UTF_8)) }
-
-        val codice = connessione.responseCode
-        val flusso = if (codice in 200..299) connessione.inputStream else connessione.errorStream
-        val risposta = flusso?.bufferedReader(Charsets.UTF_8)?.use { it.readText() } ?: ""
-        connessione.disconnect()
-
-        if (codice !in 200..299) throw erroreGemini(codice, risposta)
-        return JSONObject(risposta)
-    }
-
-    /** Domanda semplice al cervello attivo (Claude o Gemini). */
-    private fun chiamaSemplice(richiesta: String, maxToken: Int): String =
-        if (usaClaude()) chiamaClaudeSemplice(richiesta, maxToken) else chiamaGeminiSemplice(richiesta)
-
-    private fun estraiErrore(testo: String): String = try {
-        val radiceJson = JSONObject(testo)
-        val errore = radiceJson.opt("error")
-        when (errore) {
-            is JSONObject -> errore.optString("message", testo)
-            is JSONArray -> errore.optJSONObject(0)?.optJSONObject("error")?.optString("message") ?: testo
-            else -> testo
-        }
-    } catch (e: Exception) {
-        testo.take(200)
-    }
-
     // ================================================================
     //  MEMORIA: archivio sul telefono
     // ================================================================
 
     private fun svuota(array: JSONArray) {
         while (array.length() > 0) array.remove(array.length() - 1)
-    }
-
-    private fun leggiFile(nome: String): String? = try {
-        val file = File(ctx.filesDir, nome)
-        if (file.exists()) file.readText() else null
-    } catch (e: Exception) {
-        null
-    }
-
-    private fun scriviFile(nome: String, testo: String) {
-        try {
-            File(ctx.filesDir, nome).writeText(testo)
-        } catch (e: Exception) {
-            // spazio pieno o file non scrivibile: si continua senza salvare
-        }
-    }
-
-    fun leggiLista(chiave: String): MutableList<String> {
-        val array = try {
-            JSONArray(prefs.getString(chiave, "[]") ?: "[]")
-        } catch (e: Exception) {
-            JSONArray()
-        }
-        return MutableList(array.length()) { array.optString(it) }
-    }
-
-    private fun salvaLista(chiave: String, lista: List<String>) {
-        prefs.edit().putString(chiave, JSONArray(lista).toString()).apply()
-    }
-
-    /** Aggiunge una voce se non c'è già. Restituisce true se è nuova. */
-    private fun aggiungiSenzaDoppioni(chiave: String, voce: String, massimo: Int): Boolean {
-        val pulita = voce.trim().trimEnd('.')
-        if (pulita.isEmpty()) return false
-        val lista = leggiLista(chiave)
-        if (lista.any { it.equals(pulita, ignoreCase = true) }) return false
-        lista.add(pulita)
-        while (lista.size > massimo) lista.removeAt(0)
-        salvaLista(chiave, lista)
-        return true
     }
 
     private fun caricaConversazioni() {
@@ -1168,84 +592,6 @@ class Cervello private constructor(private val ctx: Context) {
         if (privata) return
         scriviFile("conversazione_claude.json", messaggiClaude.toString())
         scriviFile("conversazione_gemini.json", messaggi.toString())
-    }
-
-    // ---------- diario delle richieste ----------
-
-    private fun leggiDiario(): JSONArray = try {
-        JSONArray(leggiFile("diario.json") ?: "[]")
-    } catch (e: Exception) {
-        JSONArray()
-    }
-
-    private fun scriviNelDiario(domanda: String, risposta: String, tipo: String = "ia") {
-        if (privata) return
-        val voce = JSONObject()
-            .put("t", SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.ITALIAN).format(Date()))
-            .put("d", domanda)
-            .put("r", risposta.take(300))
-            .put("s", JSONArray(strumentiUsati.distinct()))
-            .put("k", tipo)
-            .put("u", chiParla)
-        val diario = leggiDiario()
-        diario.put(voce)
-        val inizio = (diario.length() - MAX_DIARIO).coerceAtLeast(0)
-        val accorciato = JSONArray()
-        for (i in inizio until diario.length()) accorciato.put(diario.get(i))
-        scriviFile("diario.json", accorciato.toString())
-    }
-
-    private fun cercaNelDiario(testo: String): String {
-        val diario = leggiDiario()
-        if (diario.length() == 0) return "Il diario è vuoto."
-        val parole = testo.lowercase(Locale.ITALIAN).split(Regex("\\s+")).filter { it.length > 2 }
-        val trovate = mutableListOf<String>()
-        for (i in diario.length() - 1 downTo 0) {
-            val v = diario.optJSONObject(i) ?: continue
-            val tutto = (v.optString("t") + " " + v.optString("d") + " " + v.optString("r")).lowercase(Locale.ITALIAN)
-            if (parole.isEmpty() || parole.any { tutto.contains(it) }) {
-                trovate.add("${v.optString("t")}: ha chiesto \"${v.optString("d")}\", risposta: ${v.optString("r").take(120)}")
-            }
-            if (trovate.size >= 10) break
-        }
-        return if (trovate.isEmpty()) "Nessuna richiesta trovata per \"$testo\"." else trovate.joinToString("\n")
-    }
-
-    // ---------- routine ----------
-
-    fun leggiRoutine(): JSONArray = try {
-        JSONArray(prefs.getString("routine", "[]") ?: "[]")
-    } catch (e: Exception) {
-        JSONArray()
-    }
-
-    private fun creaRoutine(nome: String, frase: String, istruzioni: String): String {
-        if (nome.isBlank() || istruzioni.isBlank()) return "Per creare una routine servono un nome e le istruzioni."
-        val routine = leggiRoutine()
-        val nuove = JSONArray()
-        for (i in 0 until routine.length()) {
-            val r = routine.getJSONObject(i)
-            if (!r.optString("nome").equals(nome.trim(), ignoreCase = true)) nuove.put(r)
-        }
-        nuove.put(
-            JSONObject()
-                .put("nome", nome.trim())
-                .put("frase", frase.trim().ifBlank { nome.trim() })
-                .put("istruzioni", istruzioni.trim())
-        )
-        prefs.edit().putString("routine", nuove.toString()).apply()
-        return "Routine ${nome.trim()} salvata."
-    }
-
-    private fun eliminaRoutine(nome: String): String {
-        val routine = leggiRoutine()
-        val nuove = JSONArray()
-        for (i in 0 until routine.length()) {
-            val r = routine.getJSONObject(i)
-            if (!r.optString("nome").equals(nome.trim(), ignoreCase = true)) nuove.put(r)
-        }
-        prefs.edit().putString("routine", nuove.toString()).apply()
-        return if (nuove.length() < routine.length()) "Routine eliminata." else "Non esiste una routine chiamata $nome."
     }
 
     // ================================================================
@@ -1341,422 +687,10 @@ class Cervello private constructor(private val ctx: Context) {
         return righe.joinToString("\n").take(6000)
     }
 
-    private fun aggiornaRiassunto(testoNuovo: String) {
-        val vecchio = prefs.getString("riassunto", "") ?: ""
-        val richiesta = "Questo è il riassunto delle conversazioni passate tra l'utente e Jarvis, il suo assistente vocale:\n" +
-            vecchio.ifBlank { "(vuoto)" } +
-            "\n\nQueste sono conversazioni più recenti da aggiungere:\n$testoNuovo\n\n" +
-            "Scrivi il riassunto aggiornato in italiano, al massimo 1000 caratteri. " +
-            "Conserva cosa interessa all'utente, cosa chiede spesso, le cose in sospeso e le sue preferenze. " +
-            "Togli i dettagli inutili. Non includere password, codici o dati bancari. " +
-            "Rispondi solo con il riassunto."
-        val nuovo = chiamaSemplice(richiesta, 600)
-        if (nuovo.isNotBlank()) prefs.edit().putString("riassunto", nuovo.take(1500)).apply()
-    }
-
-    private fun conversazioneRecente(): String = synchronized(blocco) {
+    internal fun conversazioneRecente(): String = synchronized(blocco) {
         val array = if (usaClaude()) messaggiClaude else messaggi
         val da = (array.length() - 20).coerceAtLeast(0)
         testoDellaConversazione((da until array.length()).mapNotNull { array.optJSONObject(it) }).takeLast(3000)
-    }
-
-    /** Jarvis rilegge le ultime richieste e decide da solo cosa imparare. */
-    private fun rifletti() {
-        val diario = leggiDiario()
-        if (diario.length() < 3) return
-        val inizio = (diario.length() - 20).coerceAtLeast(0)
-        val righe = StringBuilder()
-        for (i in inizio until diario.length()) {
-            val v = diario.optJSONObject(i) ?: continue
-            val strumenti = v.optJSONArray("s")?.let { s -> (0 until s.length()).joinToString(",") { s.optString(it) } } ?: ""
-            righe.append("${v.optString("t")} | ${v.optString("d")} | ${strumenti.ifBlank { "-" }} | ${v.optString("r").take(150)}\n")
-        }
-        val routine = leggiRoutine()
-        val nomiRoutine = (0 until routine.length()).joinToString(", ") { routine.getJSONObject(it).optString("nome") }
-
-        val richiesta = "Sei il modulo di auto-miglioramento di Jarvis, un assistente vocale su telefono Android.\n" +
-            "Cose che Jarvis sa già dell'utente: ${leggiLista("memoria").joinToString("; ").ifBlank { "niente" }}\n" +
-            "Lezioni già imparate: ${leggiLista("lezioni").joinToString("; ").ifBlank { "nessuna" }}\n" +
-            "Routine esistenti: ${nomiRoutine.ifBlank { "nessuna" }}\n\n" +
-            "Ultime richieste (data | richiesta | strumenti usati | risposta):\n$righe\n" +
-            "Conversazione recente:\n${conversazioneRecente()}\n\n" +
-            "Impara soprattutto dalle discussioni: interessi, progetti, persone, opinioni e preferenze emerse parlando.\n" +
-            "Individua cosa imparare per servire meglio l'utente. Rispondi SOLO con un JSON valido in questo formato:\n" +
-            "{\"ricordi\": [\"fatti stabili e nuovi detti dall'utente\"], " +
-            "\"lezioni\": [\"regole pratiche per rispondere meglio, ad esempio preferenze o errori da evitare\"], " +
-            "\"routine\": [{\"nome\": \"...\", \"frase\": \"frase che l'utente dirà\", \"istruzioni\": \"cosa fare passo per passo\"}]}\n" +
-            "Regole: al massimo 3 elementi per lista; niente che sia già presente; " +
-            "una routine solo se l'utente ha ripetuto la stessa sequenza di azioni almeno 3 volte; " +
-            "liste vuote se non c'è niente di nuovo; non dedurre dati sensibili come salute, religione, " +
-            "politica o orientamento; mai password, codici o dati bancari."
-
-        val risposta = chiamaSemplice(richiesta, 800)
-        val da = risposta.indexOf('{')
-        val a = risposta.lastIndexOf('}')
-        if (da < 0 || a <= da) return
-        val json = JSONObject(risposta.substring(da, a + 1))
-
-        val imparato = mutableListOf<String>()
-        json.optJSONArray("ricordi")?.let { lista ->
-            for (i in 0 until minOf(lista.length(), 3)) {
-                val voce = lista.optString(i)
-                if (aggiungiSenzaDoppioni("memoria", voce, MAX_RICORDI)) imparato.add(voce)
-            }
-        }
-        json.optJSONArray("lezioni")?.let { lista ->
-            for (i in 0 until minOf(lista.length(), 3)) {
-                val voce = lista.optString(i)
-                if (aggiungiSenzaDoppioni("lezioni", voce, MAX_LEZIONI)) imparato.add(voce)
-            }
-        }
-        json.optJSONArray("routine")?.let { lista ->
-            val esistenti = leggiRoutine()
-            for (i in 0 until minOf(lista.length(), 2)) {
-                val r = lista.optJSONObject(i) ?: continue
-                val nome = r.optString("nome")
-                val giaPresente = (0 until esistenti.length()).any {
-                    esistenti.getJSONObject(it).optString("nome").equals(nome, ignoreCase = true)
-                }
-                if (nome.isNotBlank() && !giaPresente) {
-                    creaRoutine(nome, r.optString("frase"), r.optString("istruzioni"))
-                    imparato.add("nuova routine \"$nome\" (di' \"${r.optString("frase")}\")")
-                }
-            }
-        }
-
-        if (imparato.isNotEmpty()) {
-            val testo = "Ho imparato: " + imparato.joinToString("; ") + ". Puoi vedere tutto con 🧠."
-            principale.post { uscita?.notaMemoria(testo) }
-        }
-    }
-
-    // ================================================================
-    //  STRUMENTI (i poteri dei plugin)
-    // ================================================================
-
-    private fun p(nome: String, tipo: String, descrizione: String) = arrayOf(nome, tipo, descrizione)
-
-    private fun strumento(
-        nome: String,
-        descrizione: String,
-        parametri: List<Array<String>>,
-        obbligatori: List<String> = emptyList()
-    ): JSONObject {
-        val proprieta = JSONObject()
-        for (par in parametri) {
-            proprieta.put(par[0], JSONObject().put("type", par[1]).put("description", par[2]))
-        }
-        val schema = JSONObject().put("type", "object").put("properties", proprieta)
-        if (obbligatori.isNotEmpty()) schema.put("required", JSONArray(obbligatori))
-        return JSONObject()
-            .put("type", "function")
-            .put(
-                "function",
-                JSONObject().put("name", nome).put("description", descrizione).put("parameters", schema)
-            )
-    }
-
-    private fun definizioniStrumenti(): JSONArray {
-        val tutti = listOf(
-            // --- Telefono ---
-            strumento("apri_app", "Apre un'app installata sul telefono.",
-                listOf(p("nome", "string", "Nome dell'app, es. WhatsApp, Spotify, Fotocamera")), listOf("nome")),
-            strumento("imposta_sveglia", "Imposta una sveglia a un orario preciso.",
-                listOf(
-                    p("ora", "integer", "Ora da 0 a 23"),
-                    p("minuti", "integer", "Minuti da 0 a 59"),
-                    p("etichetta", "string", "Nome della sveglia, facoltativo")
-                ), listOf("ora", "minuti")),
-            strumento("imposta_timer", "Avvia un conto alla rovescia.",
-                listOf(
-                    p("secondi", "integer", "Durata in secondi, es. 600 per 10 minuti"),
-                    p("etichetta", "string", "Nome del timer, facoltativo")
-                ), listOf("secondi")),
-            strumento("torcia", "Accende o spegne la torcia del telefono.",
-                listOf(p("accendi", "boolean", "true per accendere, false per spegnere")), listOf("accendi")),
-            // --- Audio ---
-            strumento("regola_volume", "Alza, abbassa o silenzia il volume multimediale.",
-                listOf(
-                    p("azione", "string", "alza, abbassa, muto oppure massimo"),
-                    p("passi", "integer", "Di quanti scatti cambiare il volume, di solito 3")
-                ), listOf("azione")),
-            strumento("riproduci", "Fa partire musica: una canzone, un artista, un album, una playlist o un genere, su Spotify, YouTube Music o altre app.",
-                listOf(
-                    p("cosa", "string", "Cosa ascoltare, es. Vasco Rossi, musica rilassante; vuoto per riprendere"),
-                    p("app", "string", "App da usare, es. Spotify; vuoto per quella preferita")
-                )),
-            strumento("controlla_musica", "Controlla la musica già in riproduzione: pausa, play, avanti, indietro.",
-                listOf(p("azione", "string", "play, pausa, avanti oppure indietro")), listOf("azione")),
-            // --- Comunicazione ---
-            strumento("chiama", "Prepara una telefonata a un contatto o a un numero. L'utente preme poi il tasto verde.",
-                listOf(p("contatto", "string", "Nome del contatto in rubrica oppure numero di telefono")), listOf("contatto")),
-            strumento("scrivi_sms", "Prepara un SMS a un contatto o a un numero. L'utente preme poi invio.",
-                listOf(
-                    p("contatto", "string", "Nome del contatto in rubrica oppure numero di telefono"),
-                    p("testo", "string", "Testo del messaggio")
-                ), listOf("contatto", "testo")),
-            // --- Web ---
-            strumento("apri_sito", "Apre un sito web nel browser.",
-                listOf(p("url", "string", "Indirizzo del sito, es. https://www.wikipedia.org")), listOf("url")),
-            strumento("cerca_sul_web", "Apre una ricerca Google sul telefono per mostrare i risultati all'utente.",
-                listOf(p("testo", "string", "Cosa cercare")), listOf("testo")),
-            strumento("cerca_su_youtube", "Cerca un video o una canzone su YouTube.",
-                listOf(p("testo", "string", "Cosa cercare su YouTube")), listOf("testo")),
-            // --- Meteo ---
-            strumento("meteo", "Previsioni del tempo per oggi, domani o dopodomani.",
-                listOf(
-                    p("citta", "string", "Città; se vuoto si usa quella predefinita"),
-                    p("giorno", "string", "oggi, domani oppure dopodomani")
-                )),
-            // --- Note ---
-            strumento("prendi_nota", "Salva una nota.",
-                listOf(p("testo", "string", "Testo della nota")), listOf("testo")),
-            strumento("leggi_note", "Legge le ultime note salvate.",
-                listOf(p("quante", "integer", "Quante note leggere, di solito 5"))),
-            // --- Notifiche ---
-            strumento("leggi_notifiche", "Legge gli ultimi messaggi arrivati nelle notifiche (WhatsApp, Telegram, SMS, email...).",
-                listOf(p("app", "string", "Filtra per app o persona, es. WhatsApp o Marco; vuoto per tutti"))),
-            strumento("rispondi_messaggio",
-                "Risponde a un messaggio ricevuto direttamente dalla sua notifica, senza aprire l'app.",
-                listOf(
-                    p("contatto", "string", "Nome di chi ha scritto, come appare nella notifica"),
-                    p("testo", "string", "Testo della risposta"),
-                    p("app", "string", "App del messaggio, facoltativa")
-                ), listOf("contatto", "testo")),
-            // --- Controllo delle app ---
-            strumento("leggi_schermo", "Legge cosa c'è sullo schermo: testi, pulsanti e campi dell'app aperta.",
-                listOf(p("motivo", "string", "Cosa stai cercando, facoltativo"))),
-            strumento("tocca", "Tocca un pulsante o un elemento sullo schermo cercandolo per testo.",
-                listOf(p("testo", "string", "Testo o descrizione dell'elemento da toccare")), listOf("testo")),
-            strumento("scrivi_testo", "Scrive un testo in un campo dell'app aperta.",
-                listOf(
-                    p("testo", "string", "Testo da scrivere"),
-                    p("campo", "string", "Nome o suggerimento del campo, facoltativo")
-                ), listOf("testo")),
-            strumento("scorri", "Scorre lo schermo.",
-                listOf(p("direzione", "string", "giù oppure su")), listOf("direzione")),
-            strumento("azione_sistema", "Usa i tasti di sistema del telefono.",
-                listOf(p("azione", "string", "indietro, home, recenti, notifiche, impostazioni rapide, blocca schermo oppure screenshot")),
-                listOf("azione")),
-            strumento("invia_whatsapp", "Manda un messaggio WhatsApp a un contatto della rubrica o a un numero.",
-                listOf(
-                    p("contatto", "string", "Nome in rubrica oppure numero di telefono"),
-                    p("testo", "string", "Testo del messaggio")
-                ), listOf("contatto", "testo")),
-            // --- Notizie e informazioni ---
-            strumento("notizie", "Ultime notizie italiane: per categoria (feed ANSA) oppure su un argomento o una città (Google News).",
-                listOf(
-                    p("categoria", "string", "principali, cronaca, politica, mondo, economia, sport oppure tecnologia"),
-                    p("argomento", "string", "Argomento o città, es. cronaca di Roma; vuoto per usare la categoria"),
-                    p("quante", "integer", "Quante notizie, di solito 5")
-                )),
-            strumento("cerca_informazioni", "Cerca informazioni su fatti, persone, luoghi o argomenti (Wikipedia e notizie recenti).",
-                listOf(p("domanda", "string", "Cosa cercare")), listOf("domanda")),
-            // --- Calendario ---
-            strumento("leggi_calendario", "Legge gli impegni del calendario del telefono.",
-                listOf(
-                    p("giorno", "string", "oggi, domani, un giorno della settimana oppure una data AAAA-MM-GG"),
-                    p("giorni", "integer", "Quanti giorni a partire da quello, di solito 1")
-                )),
-            strumento("modifica_appuntamento", "Sposta o modifica un appuntamento esistente.",
-                listOf(
-                    p("cerca", "string", "Parola del titolo dell'appuntamento da modificare"),
-                    p("giorno", "string", "Giorno attuale dell'appuntamento, se noto"),
-                    p("nuovo_titolo", "string", "Nuovo titolo, facoltativo"),
-                    p("nuovo_giorno", "string", "Nuovo giorno, facoltativo"),
-                    p("nuova_ora", "string", "Nuova ora HH:MM, facoltativa"),
-                    p("durata_minuti", "integer", "Nuova durata, facoltativa"),
-                    p("luogo", "string", "Nuovo luogo, facoltativo")
-                ), listOf("cerca")),
-            strumento("cancella_appuntamenti",
-                "Cancella appuntamenti dal calendario. Usalo SOLO dopo che l'utente ha confermato esplicitamente cosa cancellare.",
-                listOf(
-                    p("cerca", "string", "Parola del titolo, oppure tutti"),
-                    p("giorno", "string", "Giorno di inizio; vuoto per i prossimi 60 giorni"),
-                    p("giorni", "integer", "Quanti giorni a partire da quello, di solito 1")
-                ), listOf("cerca")),
-            strumento("crea_calendario", "Crea un calendario nuovo sul telefono, dove andranno i nuovi appuntamenti.",
-                listOf(p("nome", "string", "Nome del calendario, es. Jarvis o Lavoro")), listOf("nome")),
-            strumento("crea_appuntamento", "Aggiunge un appuntamento al calendario del telefono.",
-                listOf(
-                    p("titolo", "string", "Titolo, es. Dentista"),
-                    p("giorno", "string", "Data AAAA-MM-GG, oppure domani o un giorno della settimana"),
-                    p("ora", "string", "Ora HH:MM; vuota per un evento di tutto il giorno"),
-                    p("durata_minuti", "integer", "Durata in minuti, di solito 60"),
-                    p("luogo", "string", "Luogo, facoltativo")
-                ), listOf("titolo", "giorno")),
-            // --- Navigazione ---
-            strumento("naviga", "Avvia il percorso su Google Maps verso un indirizzo o un luogo salvato (es. casa).",
-                listOf(
-                    p("destinazione", "string", "Indirizzo, nome di un posto o luogo salvato"),
-                    p("mezzo", "string", "auto, a piedi, bici oppure mezzi pubblici")
-                ), listOf("destinazione")),
-            strumento("salva_luogo", "Salva un luogo preferito, es. casa o lavoro, con un indirizzo oppure la posizione attuale.",
-                listOf(
-                    p("nome", "string", "Nome del luogo, es. casa"),
-                    p("indirizzo", "string", "Indirizzo; vuoto o \"qui\" per la posizione attuale")
-                ), listOf("nome")),
-            strumento("dove_sono", "Dice dove si trova l'utente in questo momento.",
-                listOf(p("dettaglio", "string", "Facoltativo"))),
-            // --- Promemoria ---
-            strumento("promemoria", "Promemoria a una data e ora, anche ripetuto. Jarvis avvisa con una notifica e a voce.",
-                listOf(
-                    p("testo", "string", "Cosa ricordare"),
-                    p("giorno", "string", "oggi, domani, un giorno della settimana o una data AAAA-MM-GG"),
-                    p("ora", "string", "Ora HH:MM"),
-                    p("ripeti", "string", "no, ogni giorno, feriali, ogni settimana oppure ogni mese")
-                ), listOf("testo", "ora")),
-            strumento("promemoria_luogo", "Promemoria che scatta quando l'utente arriva o esce da un luogo.",
-                listOf(
-                    p("testo", "string", "Cosa ricordare"),
-                    p("luogo", "string", "Luogo salvato (es. casa) o indirizzo"),
-                    p("quando", "string", "arrivo oppure uscita")
-                ), listOf("testo", "luogo")),
-            strumento("elenca_promemoria", "Elenca i promemoria attivi.",
-                listOf(p("filtro", "string", "Facoltativo"))),
-            strumento("cancella_promemoria", "Cancella i promemoria che contengono una parola, oppure tutti.",
-                listOf(p("parola", "string", "Parola da cercare, oppure tutti")), listOf("parola")),
-            // --- Vista ---
-            strumento("guarda", "Apre la fotocamera: l'utente scatta una foto e Jarvis la descrive, legge i testi o li traduce.",
-                listOf(p("domanda", "string", "Cosa vuole sapere l'utente, es. cosa vedi, leggimi questo, traduci")), listOf("domanda")),
-            // --- Mattino ---
-            strumento("riepilogo_giornata", "Raccoglie meteo, impegni, promemoria, messaggi e notizie principali di oggi.",
-                listOf(p("tipo", "string", "mattino, facoltativo"))),
-            // --- Memoria (sempre attiva) ---
-            strumento("ricorda",
-                "Salva nella memoria permanente un fatto stabile o una preferenza dell'utente. " +
-                    "Usalo di tua iniziativa quando scopri qualcosa di utile, senza chiedere.",
-                listOf(p("informazione", "string", "Il fatto da ricordare, es. Si chiama Dario")), listOf("informazione")),
-            strumento("impara_lezione",
-                "Salva una regola pratica per migliorarti: quando l'utente ti corregge, quando uno strumento " +
-                    "fallisce e trovi il modo giusto, o quando capisci come preferisce che tu faccia qualcosa.",
-                listOf(p("lezione", "string", "La regola, es. Per la musica usa sempre Spotify")), listOf("lezione")),
-            strumento("crea_routine",
-                "Crea o aggiorna una routine: una frase dell'utente che fa partire una sequenza di azioni.",
-                listOf(
-                    p("nome", "string", "Nome breve, es. buonanotte"),
-                    p("frase", "string", "Frase che l'utente dirà, es. buonanotte Jarvis"),
-                    p("istruzioni", "string", "Cosa fare passo per passo, es. spegni la torcia, sveglia alle 7, volume al minimo")
-                ), listOf("nome", "frase", "istruzioni")),
-            strumento("elimina_routine", "Elimina una routine.",
-                listOf(p("nome", "string", "Nome della routine")), listOf("nome")),
-            strumento("cerca_nel_diario",
-                "Cerca tra tutte le richieste passate dell'utente. Accetta parole o una data nel formato AAAA-MM-GG; " +
-                    "vuoto per le più recenti.",
-                listOf(p("testo", "string", "Parole o data da cercare"))),
-            strumento("dimentica",
-                "Cancella dalla memoria ricordi, lezioni e routine che contengono una parola. Usa 'tutto' per cancellare tutto.",
-                listOf(p("parola", "string", "Parola da cercare, oppure tutto")), listOf("parola")),
-            strumento("cerca_ricordi", "Cerca tra tutti i ricordi e le lezioni salvati, anche quelli che non vedi nel contesto.",
-                listOf(p("testo", "string", "Parole da cercare")), listOf("testo")),
-            strumento("attendi", "Aspetta qualche secondo, per esempio mentre un'app si carica, poi rileggi lo schermo.",
-                listOf(p("secondi", "integer", "Da 1 a 10")), listOf("secondi")),
-            // --- Vista dal vivo ---
-            strumento("vista_dal_vivo", "Apre la fotocamera dal vivo: l'utente inquadra e fa domande su quello che vede in tempo reale.",
-                listOf(p("domanda", "string", "Prima domanda, facoltativa"))),
-            // --- Casa ---
-            strumento("casa_dispositivi", "Elenca i dispositivi di casa (luci, prese, termostati, tapparelle...) e il loro stato.",
-                listOf(p("filtro", "string", "Stanza o tipo, es. luci, cucina; vuoto per tutti"))),
-            strumento("casa_comando", "Comanda un dispositivo di casa intelligente.",
-                listOf(
-                    p("dispositivo", "string", "Nome del dispositivo o della stanza, es. luce cucina"),
-                    p("azione", "string", "accendi, spegni, alterna, apri, chiudi, imposta, attiva"),
-                    p("valore", "string", "Facoltativo: luminosità o posizione in percentuale, temperatura in gradi")
-                ), listOf("dispositivo", "azione")),
-            strumento("esegui_scorciatoia", "Esegue una scorciatoia web creata dall'utente (Home Assistant, IFTTT, Shelly, Alexa...).",
-                listOf(p("nome", "string", "Nome della scorciatoia")), listOf("nome")),
-            // --- Email ---
-            strumento("leggi_email", "Legge le ultime email ricevute.",
-                listOf(
-                    p("quante", "integer", "Quante email, di solito 5"),
-                    p("solo_non_lette", "boolean", "true per leggere solo quelle non lette"),
-                    p("cerca", "string", "Mittente o parola da cercare, facoltativo")
-                )),
-            strumento("invia_email", "Invia una email.",
-                listOf(
-                    p("destinatario", "string", "Indirizzo email o nome di un contatto in rubrica"),
-                    p("oggetto", "string", "Oggetto"),
-                    p("testo", "string", "Testo dell'email")
-                ), listOf("destinatario", "testo")),
-            strumento("rispondi_email", "Risponde a una email ricevuta (usa il numero restituito da leggi_email).",
-                listOf(
-                    p("numero", "integer", "Numero dell'email tra parentesi quadre in leggi_email"),
-                    p("testo", "string", "Testo della risposta")
-                ), listOf("numero", "testo")),
-            // --- PC ---
-            strumento("pc", "Comanda il computer Windows dell'utente.",
-                listOf(
-                    p("azione", "string", "apri, sito, cerca, volume_su, volume_giu, muto, play_pausa, avanti, indietro, " +
-                        "blocca, spegni, riavvia, annulla_spegnimento, scrivi, copia, messaggio oppure stato"),
-                    p("valore", "string", "Programma, sito, testo o messaggio, se serve")
-                ), listOf("azione")),
-            strumento("pc_accendi", "Accende il computer da remoto (Wake-on-LAN).",
-                listOf(p("motivo", "string", "Facoltativo"))),
-            // --- Sistema ---
-            strumento("non_disturbare", "Attiva o disattiva la modalità non disturbare.",
-                listOf(p("attiva", "boolean", "true per attivarla, false per disattivarla")), listOf("attiva")),
-            strumento("suoneria", "Cambia la suoneria del telefono.",
-                listOf(p("modalita", "string", "normale, vibrazione oppure silenzioso")), listOf("modalita")),
-            strumento("luminosita", "Cambia la luminosità dello schermo.",
-                listOf(p("valore", "string", "percentuale (es. 40), alza, abbassa, massima, minima oppure automatica")), listOf("valore")),
-            // --- Automazioni ---
-            strumento("crea_automazione", "Crea un'automazione: quando succede qualcosa, Jarvis esegue da solo delle istruzioni.",
-                listOf(
-                    p("nome", "string", "Nome breve, es. arrivo a casa"),
-                    p("quando", "string", "orario, arrivo, uscita, batteria, auto, fine_auto, cuffie, carica oppure fine_carica"),
-                    p("valore", "string", "Per orario: HH:MM. Per batteria: la soglia in percentuale"),
-                    p("luogo", "string", "Per arrivo e uscita: luogo salvato (es. casa) o indirizzo"),
-                    p("giorni", "string", "Per orario: tutti, feriali, weekend oppure giorni come lun,mer,ven"),
-                    p("istruzioni", "string", "Cosa fare, in italiano, es. accendi le luci del soggiorno e leggimi i messaggi")
-                ), listOf("quando", "istruzioni")),
-            strumento("elenca_automazioni", "Elenca le automazioni create.",
-                listOf(p("filtro", "string", "Facoltativo"))),
-            strumento("elimina_automazione", "Elimina le automazioni che contengono una parola, oppure tutte.",
-                listOf(p("parola", "string", "Parola da cercare, oppure tutte")), listOf("parola")),
-            // --- Liste ---
-            strumento("lista_aggiungi", "Aggiunge una o più cose a una lista (spesa, cose da fare, regali...).",
-                listOf(
-                    p("lista", "string", "Nome della lista, es. spesa"),
-                    p("cosa", "string", "Cose da aggiungere, separate da virgola")
-                ), listOf("lista", "cosa")),
-            strumento("lista_leggi", "Legge una lista, oppure tutte se il nome è vuoto.",
-                listOf(p("lista", "string", "Nome della lista; vuoto per tutte"))),
-            strumento("lista_togli", "Toglie una cosa da una lista, oppure la svuota con tutto.",
-                listOf(
-                    p("lista", "string", "Nome della lista"),
-                    p("cosa", "string", "Cosa togliere, oppure tutto")
-                ), listOf("lista", "cosa")),
-            strumento("lista_invia", "Manda una lista su WhatsApp a un contatto.",
-                listOf(
-                    p("lista", "string", "Nome della lista"),
-                    p("contatto", "string", "Nome in rubrica oppure numero")
-                ), listOf("lista", "contatto")),
-            // --- Traduttore, resoconto, privacy ---
-            strumento("traduttore", "Apre il traduttore simultaneo per parlare con una persona in un'altra lingua.",
-                listOf(p("lingua", "string", "Lingua dell'altra persona, es. inglese")), listOf("lingua")),
-            strumento("resoconto_settimana", "Prepara il resoconto della settimana: cosa ha fatto l'utente e cosa lo aspetta.",
-                listOf(p("tipo", "string", "Facoltativo"))),
-            strumento("modalita_privata", "Attiva o disattiva la modalità privata: niente diario, ricordi o salvataggi.",
-                listOf(p("attiva", "boolean", "true per attivarla, false per uscire e dimenticare la conversazione")), listOf("attiva")),
-            // --- Archivio dei documenti ---
-            strumento("archivio_cerca", "Cerca tra i documenti e le foto caricati dall'utente (nomi e riassunti).",
-                listOf(p("testo", "string", "Parole da cercare, es. bolletta luce, contratto; vuoto per l'elenco")), listOf("testo")),
-            strumento("archivio_leggi", "Rilegge un documento dell'archivio per rispondere a una domanda precisa.",
-                listOf(
-                    p("documento", "string", "Nome o argomento del documento"),
-                    p("domanda", "string", "Cosa vuole sapere l'utente")
-                ), listOf("documento", "domanda")),
-            strumento("archivio_elimina", "Toglie un documento dall'archivio.",
-                listOf(p("documento", "string", "Nome del documento")), listOf("documento")),
-            strumento("conferma_azione",
-                "Comunica la risposta dell'utente a un'azione in attesa di conferma (apertura di un'app, cancellazioni).",
-                listOf(p("risposta", "string", "sì se l'utente ha confermato, no se ha rifiutato")), listOf("risposta"))
-        )
-        val attivi = JSONArray()
-        for (s in tutti) {
-            if (strumentoAttivo(s.getJSONObject("function").getString("name"))) attivi.put(s)
-        }
-        return attivi
     }
 
     // ================================================================
@@ -1772,7 +706,7 @@ class Cervello private constructor(private val ctx: Context) {
         val creata: Long = System.currentTimeMillis()
     )
 
-    @Volatile private var turno = 0
+    @Volatile internal var turno = 0
     @Volatile private var inSospeso: AzioneInSospeso? = null
 
     /** Pulsanti che spendono soldi: per toccarli servono due conferme dell'utente. */
@@ -1978,230 +912,6 @@ class Cervello private constructor(private val ctx: Context) {
         }
     }
 
-    // ---------- utilità ----------
-
-    /** Esegue un'azione sul thread dell'interfaccia e aspetta il risultato. */
-    private fun suUi(azione: () -> String): String {
-        var risultato = "Fatto."
-        val attesa = CountDownLatch(1)
-        principale.post {
-            risultato = try {
-                azione()
-            } catch (e: Exception) {
-                "Errore: ${e.message}"
-            }
-            attesa.countDown()
-        }
-        attesa.await(5, TimeUnit.SECONDS)
-        return risultato
-    }
-
-    private fun avvia(intento: Intent, messaggioOk: String): String = suUi {
-        intento.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        try {
-            lanciatore().startActivity(intento)
-            messaggioOk
-        } catch (e: Exception) {
-            "Non ho trovato un'app in grado di farlo."
-        }
-    }
-
-    private fun codifica(testo: String): String = URLEncoder.encode(testo, "UTF-8")
-
-    private fun normalizzaUrl(url: String): String {
-        val u = url.trim()
-        return if (u.startsWith("http://") || u.startsWith("https://")) u else "https://$u"
-    }
-
-    private fun httpGet(indirizzo: String): String {
-        val connessione = URL(indirizzo).openConnection() as HttpURLConnection
-        connessione.connectTimeout = 10000
-        connessione.readTimeout = 15000
-        return try {
-            connessione.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
-        } finally {
-            connessione.disconnect()
-        }
-    }
-
-    // ---------- app e web ----------
-
-    internal fun apriApp(nome: String): String = suUi {
-        val cercato = nome.lowercase(Locale.ITALIAN).trim()
-        val pm = ctx.packageManager
-        val lanciabili = pm.queryIntentActivities(
-            Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER), 0
-        )
-        val trovata = lanciabili.firstOrNull {
-            it.loadLabel(pm).toString().lowercase(Locale.ITALIAN) == cercato
-        } ?: lanciabili.firstOrNull {
-            it.loadLabel(pm).toString().lowercase(Locale.ITALIAN).contains(cercato)
-        }
-        if (trovata == null || cercato.isEmpty()) {
-            "Non ho trovato nessuna app chiamata $nome."
-        } else {
-            val lancio = pm.getLaunchIntentForPackage(trovata.activityInfo.packageName)
-            if (lancio == null) {
-                "Non riesco ad aprire $nome."
-            } else {
-                lancio.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                lanciatore().startActivity(lancio)
-                "Ho aperto ${trovata.loadLabel(pm)}. Se l'utente voleva fare qualcosa nell'app, continua: usa leggi_schermo e poi tocca o scrivi."
-            }
-        }
-    }
-
-    private fun apriUrl(url: String, messaggioOk: String): String =
-        avvia(Intent(Intent.ACTION_VIEW, Uri.parse(url)), messaggioOk)
-
-    // ---------- sveglie e timer ----------
-
-    internal fun impostaSveglia(ora: Int, minuti: Int, etichetta: String): String {
-        if (ora !in 0..23 || minuti !in 0..59) return "Orario non valido."
-        val intento = Intent(AlarmClock.ACTION_SET_ALARM)
-            .putExtra(AlarmClock.EXTRA_HOUR, ora)
-            .putExtra(AlarmClock.EXTRA_MINUTES, minuti)
-            .putExtra(AlarmClock.EXTRA_SKIP_UI, true)
-        if (etichetta.isNotBlank()) intento.putExtra(AlarmClock.EXTRA_MESSAGE, etichetta)
-        return avvia(intento, "Sveglia impostata alle %02d:%02d.".format(ora, minuti))
-    }
-
-    internal fun impostaTimer(secondi: Int, etichetta: String): String {
-        if (secondi !in 1..86400) return "Durata non valida."
-        val intento = Intent(AlarmClock.ACTION_SET_TIMER)
-            .putExtra(AlarmClock.EXTRA_LENGTH, secondi)
-            .putExtra(AlarmClock.EXTRA_SKIP_UI, true)
-        if (etichetta.isNotBlank()) intento.putExtra(AlarmClock.EXTRA_MESSAGE, etichetta)
-        val descrizione = if (secondi >= 60 && secondi % 60 == 0) "${secondi / 60} minuti" else "$secondi secondi"
-        return avvia(intento, "Timer di $descrizione avviato.")
-    }
-
-    // ---------- torcia ----------
-
-    internal fun torcia(accendi: Boolean): String {
-        if (Build.VERSION.SDK_INT < 23) return "Il telefono non permette di controllare la torcia."
-        val camere = ctx.getSystemService(Context.CAMERA_SERVICE) as CameraManager
-        val idCamera = camere.cameraIdList.firstOrNull {
-            camere.getCameraCharacteristics(it).get(CameraCharacteristics.FLASH_INFO_AVAILABLE) == true
-        } ?: return "Questo telefono non ha il flash."
-        camere.setTorchMode(idCamera, accendi)
-        return if (accendi) "Torcia accesa." else "Torcia spenta."
-    }
-
-    // ---------- chiamate e SMS ----------
-
-    private fun permessoContattiMancante(): Boolean =
-        Build.VERSION.SDK_INT >= 23 &&
-            ctx.checkSelfPermission(Manifest.permission.READ_CONTACTS) != PackageManager.PERMISSION_GRANTED
-
-    private fun eUnNumero(contatto: String) =
-        contatto.replace(Regex("[\\s.-]"), "").matches(Regex("\\+?[0-9]{3,}"))
-
-    /** Restituisce il numero, oppure null se non trovato. */
-    private fun trovaNumero(contatto: String): String? {
-        val compatto = contatto.replace(Regex("[\\s.-]"), "")
-        if (compatto.matches(Regex("\\+?[0-9]{3,}"))) return compatto
-        val cursore = ctx.contentResolver.query(
-            ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
-            arrayOf(
-                ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME,
-                ContactsContract.CommonDataKinds.Phone.NUMBER
-            ),
-            "${ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME} LIKE ?",
-            arrayOf("%${contatto.trim()}%"),
-            null
-        )
-        cursore?.use { if (it.moveToFirst()) return it.getString(1) }
-        return null
-    }
-
-    private fun chiediPermessoContatti(): String {
-        val schermata = uscita
-            ?: return "Mi serve il permesso di leggere la rubrica: apri l'app Jarvis e ripeti la richiesta da lì."
-        principale.post { schermata.chiediPermesso(Manifest.permission.READ_CONTACTS) }
-        return "Mi serve il permesso di leggere la rubrica. Concedilo e ripeti la richiesta."
-    }
-
-    internal fun chiama(contatto: String): String {
-        if (!eUnNumero(contatto) && permessoContattiMancante()) return chiediPermessoContatti()
-        val numero = trovaNumero(contatto) ?: return "Non ho trovato $contatto in rubrica."
-        val puoChiamare = Build.VERSION.SDK_INT < 23 ||
-            ctx.checkSelfPermission(Manifest.permission.CALL_PHONE) == PackageManager.PERMISSION_GRANTED
-        if (puoChiamare) {
-            return avvia(Intent(Intent.ACTION_CALL, Uri.parse("tel:" + Uri.encode(numero))), "Chiamo $contatto.")
-        }
-        // Senza permesso: lo chiedo e intanto preparo la chiamata
-        uscita?.let { schermata -> principale.post { schermata.chiediPermesso(Manifest.permission.CALL_PHONE) } }
-        return avvia(
-            Intent(Intent.ACTION_DIAL, Uri.parse("tel:" + Uri.encode(numero))),
-            "Ho preparato la chiamata a $contatto: premi il tasto verde. Se mi dai il permesso per le telefonate, la prossima volta chiamo io."
-        )
-    }
-
-    private fun scriviSms(contatto: String, testo: String): String {
-        if (!eUnNumero(contatto) && permessoContattiMancante()) return chiediPermessoContatti()
-        val numero = trovaNumero(contatto) ?: return "Non ho trovato $contatto in rubrica."
-        val intento = Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:" + Uri.encode(numero)))
-            .putExtra("sms_body", testo)
-        return avvia(intento, "Ho preparato il messaggio per $contatto: controllalo e premi invia.")
-    }
-
-    private fun inviaWhatsapp(contatto: String, testo: String): String {
-        if (testo.isBlank()) return "Il messaggio è vuoto."
-        if (!eUnNumero(contatto) && permessoContattiMancante()) return chiediPermessoContatti()
-        val numero = trovaNumero(contatto) ?: return "Non ho trovato $contatto in rubrica."
-        var cifre = numero.replace(Regex("[^0-9+]"), "")
-        cifre = when {
-            cifre.startsWith("+") -> cifre.substring(1)
-            cifre.startsWith("00") -> cifre.substring(2)
-            cifre.length == 10 && cifre.startsWith("3") -> "39$cifre"   // cellulare italiano senza prefisso
-            else -> cifre
-        }
-        val intento = Intent(Intent.ACTION_VIEW, Uri.parse("https://wa.me/$cifre?text=" + codifica(testo)))
-        val esito = avvia(Intent(intento).setPackage("com.whatsapp"), "ok")
-        if (esito != "ok") {
-            val alternativo = avvia(intento, "ok")
-            if (alternativo != "ok") return "Non riesco ad aprire WhatsApp."
-        }
-        val acc = AccessibilitaJarvis.istanza
-            ?: return "Ho preparato il messaggio su WhatsApp per $contatto: premi invia. Attiva il controllo delle app e lo invierò io."
-        return if (acc.toccaInvioWhatsapp()) "Messaggio WhatsApp inviato a $contatto." else
-            "Ho preparato il messaggio su WhatsApp per $contatto ma non trovo il tasto invia: premilo tu."
-    }
-
-    /** Indirizzo email: scritto direttamente oppure cercato in rubrica per nome. */
-    private fun trovaEmail(chi: String): String? {
-        val c = chi.trim()
-        if (c.contains("@")) return c.replace(" ", "")
-        if (permessoContattiMancante()) return null
-        val cursore = ctx.contentResolver.query(
-            ContactsContract.CommonDataKinds.Email.CONTENT_URI,
-            arrayOf(ContactsContract.CommonDataKinds.Email.DISPLAY_NAME_PRIMARY, ContactsContract.CommonDataKinds.Email.ADDRESS),
-            "${ContactsContract.CommonDataKinds.Email.DISPLAY_NAME_PRIMARY} LIKE ?",
-            arrayOf("%$c%"),
-            null
-        )
-        cursore?.use { if (it.moveToFirst()) return it.getString(1) }
-        return null
-    }
-
-    // ---------- volume in percentuale e batteria (comandi rapidi) ----------
-
-    internal fun volumePercento(percento: Int): String = suUi {
-        val audio = ctx.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-        val massimo = audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
-        val livello = (percento.coerceIn(0, 100) * massimo + 50) / 100
-        audio.setStreamVolume(AudioManager.STREAM_MUSIC, livello, AudioManager.FLAG_SHOW_UI)
-        "Volume al ${percento.coerceIn(0, 100)} per cento."
-    }
-
-    internal fun batteria(): String {
-        val gestore = ctx.getSystemService(Context.BATTERY_SERVICE) as android.os.BatteryManager
-        val livello = gestore.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY)
-        val inCarica = Build.VERSION.SDK_INT >= 23 && gestore.isCharging
-        return "Batteria al $livello per cento" + (if (inCarica) ", in carica." else ".")
-    }
-
     // ================================================================
     //  CONTENUTI CONDIVISI, TRADUZIONI E RESOCONTO
     // ================================================================
@@ -2209,166 +919,11 @@ class Cervello private constructor(private val ctx: Context) {
     /** Qualcosa condiviso con Jarvis da un'altra app. tipo: testo, link, immagine, pdf, audio, video, file */
     class Contenuto(val tipo: String, val titolo: String, val testo: String, val base64: String?, val mime: String)
 
-    /** Il testo leggibile di una pagina web. */
-    fun testoDellaPagina(url: String): String {
-        val c = URL(url).openConnection() as HttpURLConnection
-        c.connectTimeout = 10000
-        c.readTimeout = 15000
-        c.instanceFollowRedirects = true
-        c.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 14) Jarvis")
-        val html = try {
-            c.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
-        } finally {
-            c.disconnect()
-        }
-        val titolo = Regex("(?is)<title[^>]*>(.*?)</title>").find(html)?.groupValues?.get(1)?.trim().orEmpty()
-        val corpo = html
-            .replace(Regex("(?is)<(script|style|noscript|svg|nav|footer|header)[^>]*>.*?</\\1>"), " ")
-            .replace(Regex("(?i)<br\\s*/?>|</p>|</h[1-6]>|</li>"), "\n")
-            .replace(Regex("<[^>]+>"), " ")
-            .replace("&nbsp;", " ").replace("&amp;", "&").replace("&quot;", "\"").replace("&#39;", "'")
-            .replace("&lt;", "<").replace("&gt;", ">")
-            .replace(Regex("[ \\t]+"), " ")
-            .replace(Regex("\\n\\s*\\n+"), "\n")
-            .trim()
-        return (if (titolo.isNotEmpty()) "Titolo: $titolo\n" else "") + corpo.take(60000)
-    }
-
-    /** Riassume, traduce o risponde a domande su un contenuto condiviso. */
-    fun analizzaContenuto(c: Contenuto, istruzione: String): String = analizzaContenuti(listOf(c), istruzione, "")
-
-    /**
-     * Risponde su uno o più file caricati (foto, PDF, documenti, audio, video).
-     * @param contesto domande e risposte precedenti sugli stessi file, per le domande successive
-     */
-    fun analizzaContenuti(lista: List<Contenuto>, istruzione: String, contesto: String): String {
-        if (chiaveAttiva().isEmpty()) return "Manca la chiave API: inseriscila in Cervello."
-        val testi = lista.filter { it.base64 == null }
-        val file = lista.filter { it.base64 != null }
-        val richiesta = StringBuilder()
-        if (contesto.isNotBlank()) richiesta.append("Domande e risposte precedenti su questi file:\n").append(contesto.takeLast(3000)).append("\n\n")
-        richiesta.append(istruzione).append("\nRispondi in italiano, in modo chiaro, adatto a essere letto ad alta voce, senza simboli di formattazione.")
-        if (file.isNotEmpty()) richiesta.append("\nFile allegati: ").append(file.joinToString(", ") { it.titolo }).append(".")
-        for (t in testi) richiesta.append("\n\nCONTENUTO DI \"${t.titolo}\":\n").append(t.testo.take(60000 / testi.size.coerceAtLeast(1)))
-        val inizio = System.currentTimeMillis()
-        val r = when {
-            file.isEmpty() -> chiamaSemplice(richiesta.toString(), 1500)
-            usaClaude() -> claudeFile(file, richiesta.toString())
-            else -> geminiFile(file, richiesta.toString())
-        }
-        Statistiche.richiesta(ctx, "ia", System.currentTimeMillis() - inizio, lista.map { "file_${it.tipo}" })
-        return r.ifBlank { "Non ho trovato niente da dire su questo contenuto." }
-    }
-
-    /** Riassunto breve da conservare nell'archivio dei documenti. */
-    fun riassuntoPerArchivio(c: Contenuto): String = analizzaContenuti(
-        listOf(c),
-        "Fai un riassunto di questo documento in al massimo 5 frasi, da conservare in archivio. Indica che tipo di documento è " +
-            "e riporta date, scadenze, importi, nomi, indirizzi e numeri importanti.",
-        ""
-    )
-
     /** Uno scambio avvenuto fuori dalla conversazione normale (per esempio sui file) entra in diario e conversazione. */
     fun registraScambioEsterno(domanda: String, risposta: String) = synchronized(blocco) {
         scriviNelDiario(domanda, risposta, "file")
         registraScambioLocale(domanda, risposta)
         salvaConversazioni()
-    }
-
-    /** Gemini (API nativa) legge immagini, PDF, audio e video direttamente. */
-    private fun geminiFile(file: List<Contenuto>, richiesta: String): String {
-        val modello = prefs.getString("modello", MODELLO_PREDEFINITO) ?: MODELLO_PREDEFINITO
-        val parti = JSONArray()
-        for (f in file) parti.put(JSONObject().put("inline_data", JSONObject().put("mime_type", f.mime).put("data", f.base64)))
-        parti.put(JSONObject().put("text", richiesta))
-        val corpo = JSONObject().put("contents", JSONArray().put(JSONObject().put("role", "user").put("parts", parti)))
-        val c = URL("https://generativelanguage.googleapis.com/v1beta/models/$modello:generateContent").openConnection() as HttpURLConnection
-        c.requestMethod = "POST"
-        c.connectTimeout = 15000
-        c.readTimeout = 180000
-        c.doOutput = true
-        c.setRequestProperty("Content-Type", "application/json; charset=utf-8")
-        c.setRequestProperty("x-goog-api-key", Cassaforte.leggi(prefs, "api_key").trim())
-        c.outputStream.use { it.write(corpo.toString().toByteArray(Charsets.UTF_8)) }
-        val codice = c.responseCode
-        val testo = (if (codice in 200..299) c.inputStream else c.errorStream)?.bufferedReader(Charsets.UTF_8)?.use { it.readText() } ?: ""
-        c.disconnect()
-        if (codice !in 200..299) throw erroreGemini(codice, testo)
-        val risposta = JSONObject(testo).optJSONArray("candidates")?.optJSONObject(0)?.optJSONObject("content")?.optJSONArray("parts")
-            ?: return ""
-        return (0 until risposta.length()).mapNotNull { risposta.optJSONObject(it)?.optString("text") }.joinToString(" ").trim()
-    }
-
-    /** Claude legge immagini e PDF (non audio e video). */
-    private fun claudeFile(file: List<Contenuto>, richiesta: String): String {
-        val contenuto = JSONArray()
-        for (f in file) {
-            when {
-                f.mime in setOf("image/jpeg", "image/png", "image/gif", "image/webp") -> contenuto.put(JSONObject().put("type", "image")
-                    .put("source", JSONObject().put("type", "base64").put("media_type", f.mime).put("data", f.base64)))
-                f.mime == "application/pdf" -> contenuto.put(JSONObject().put("type", "document")
-                    .put("source", JSONObject().put("type", "base64").put("media_type", "application/pdf").put("data", f.base64)))
-                else -> return "Con Claude posso leggere solo testi, documenti, immagini e PDF. Per audio e video scegli Gemini in Cervello."
-            }
-        }
-        contenuto.put(JSONObject().put("type", "text").put("text", richiesta))
-        val modello = modelloClaude()
-        val corpo = JSONObject()
-            .put("model", modello)
-            .put("max_tokens", 1500)
-            .put("messages", JSONArray().put(JSONObject().put("role", "user").put("content", contenuto)))
-        if (modello.contains("haiku")) corpo.put("thinking", JSONObject().put("type", "disabled"))
-        val blocchi = postClaude(corpo).optJSONArray("content") ?: return ""
-        return (0 until blocchi.length()).mapNotNull { blocchi.optJSONObject(it) }
-            .filter { it.optString("type") == "text" }.joinToString(" ") { it.optString("text") }.trim()
-    }
-
-    /** Traduzione per il traduttore simultaneo: solo il testo tradotto, niente commenti. */
-    fun traduci(testo: String, da: String, a: String): String {
-        if (chiaveAttiva().isEmpty()) return "Manca la chiave API."
-        val r = chiamaSemplice(
-            "Traduci dal $da al $a questa frase detta a voce in una conversazione. Rendi il senso in modo naturale, " +
-                "come lo direbbe una persona madrelingua. Rispondi SOLO con la traduzione, senza virgolette né commenti.\n\n$testo",
-            500
-        )
-        Statistiche.richiesta(ctx, "ia", 0, listOf("traduttore"))
-        return r.trim().trim('"', '«', '»')
-    }
-
-    /** Resoconto della settimana: cosa è successo e cosa aspetta l'utente nei prossimi giorni. */
-    fun resocontoSettimana(): String {
-        if (chiaveAttiva().isEmpty()) return "Manca la chiave API."
-        val limite = SimpleDateFormat("yyyy-MM-dd", Locale.ITALIAN).format(Date(System.currentTimeMillis() - 7 * 24 * 3600_000L))
-        val diario = leggiDiario()
-        val righe = (0 until diario.length()).mapNotNull { diario.optJSONObject(it) }
-            .filter { it.optString("t") >= limite }
-            .takeLast(150)
-            .joinToString("\n") { "${it.optString("t")}: ${it.optString("d")} → ${it.optString("r").take(80)}" }
-        val impegni = try {
-            if (Build.VERSION.SDK_INT < 23 || ctx.checkSelfPermission(Manifest.permission.READ_CALENDAR) == PackageManager.PERMISSION_GRANTED)
-                integrazioni.leggiCalendario("domani", 7) else ""
-        } catch (e: Exception) { "" }
-        val promemoria = Promemoria.descrivi(ctx)
-        val richiesta = "Sei ${nomeAssistente()}, assistente vocale. ${personalita()}\n" +
-            "Scrivi il resoconto della settimana dell'utente, da leggere ad alta voce la domenica sera.\n" +
-            "Racconta in 6-8 frasi: i temi principali di cui si è occupato, le cose fatte, quelle rimaste in sospeso, " +
-            "e cosa lo aspetta nei prossimi giorni. Discorsivo, niente elenchi, niente simboli.\n\n" +
-            "RICHIESTE DELLA SETTIMANA:\n${righe.ifBlank { "nessuna" }}\n\nIMPEGNI DEI PROSSIMI 7 GIORNI:\n${impegni.ifBlank { "nessuno" }}\n\n" +
-            "PROMEMORIA ATTIVI:\n$promemoria"
-        return chiamaSemplice(richiesta, 900).ifBlank { "Questa settimana non ho abbastanza informazioni per un resoconto." }
-    }
-
-    /** Vista dal vivo: descrive un fotogramma della fotocamera (usata da VistaDalVivo). */
-    fun descriviFotogramma(base64: String, domanda: String, contesto: String): String {
-        val richiesta = "Sei gli occhi di Jarvis, un assistente vocale. L'utente sta inquadrando con la fotocamera " +
-            "e chiede: \"${domanda.ifBlank { "cosa vedi?" }}\". " +
-            (if (contesto.isNotBlank()) "Domande e risposte precedenti: $contesto. " else "") +
-            "Rispondi in italiano, in modo concreto e breve (al massimo 3 frasi, da leggere ad alta voce). " +
-            "Se ci sono testi, leggili; se chiede una traduzione, traducili in italiano."
-        val inizio = System.currentTimeMillis()
-        val r = if (usaClaude()) visioneClaude(base64, richiesta) else visioneGemini(base64, richiesta)
-        Statistiche.richiesta(ctx, "vista", System.currentTimeMillis() - inizio, listOf("vista_dal_vivo"))
-        return r
     }
 
     // ---------- promemoria ----------
@@ -2390,7 +945,7 @@ class Cervello private constructor(private val ctx: Context) {
 
     // ---------- vista: foto descritte da Claude o Gemini ----------
 
-    private fun guarda(domanda: String): String {
+    internal fun guarda(domanda: String): String {
         val schermata = uscita ?: return "Per mostrarmi qualcosa apri l'app Jarvis e chiedimelo da lì."
         val cartella = File(ctx.cacheDir, "foto").apply { mkdirs() }
         val file = File(cartella, "vista.jpg")
@@ -2431,34 +986,6 @@ class Cervello private constructor(private val ctx: Context) {
         null
     }
 
-    private fun visioneGemini(base64: String, richiesta: String): String {
-        val modello = prefs.getString("modello", MODELLO_PREDEFINITO) ?: MODELLO_PREDEFINITO
-        val contenuto = JSONArray()
-            .put(JSONObject().put("type", "text").put("text", richiesta))
-            .put(JSONObject().put("type", "image_url").put("image_url", JSONObject().put("url", "data:image/jpeg;base64,$base64")))
-        val corpo = JSONObject()
-            .put("model", modello)
-            .put("messages", JSONArray().put(JSONObject().put("role", "user").put("content", contenuto)))
-        val messaggio = postGemini(corpo).getJSONArray("choices").getJSONObject(0).getJSONObject("message")
-        return if (messaggio.isNull("content")) "niente di riconoscibile." else messaggio.getString("content").trim()
-    }
-
-    private fun visioneClaude(base64: String, richiesta: String): String {
-        val modello = modelloClaude()
-        val contenuto = JSONArray()
-            .put(JSONObject().put("type", "image").put("source", JSONObject()
-                .put("type", "base64").put("media_type", "image/jpeg").put("data", base64)))
-            .put(JSONObject().put("type", "text").put("text", richiesta))
-        val corpo = JSONObject()
-            .put("model", modello)
-            .put("max_tokens", 600)
-            .put("messages", JSONArray().put(JSONObject().put("role", "user").put("content", contenuto)))
-        if (modello.contains("haiku")) corpo.put("thinking", JSONObject().put("type", "disabled"))
-        val blocchi = postClaude(corpo).optJSONArray("content") ?: return "niente di riconoscibile."
-        return (0 until blocchi.length()).mapNotNull { blocchi.optJSONObject(it) }
-            .filter { it.optString("type") == "text" }.joinToString(" ") { it.optString("text") }.trim()
-    }
-
     // ---------- riepilogo del mattino ----------
 
     fun riepilogoGiornata(): String {
@@ -2486,258 +1013,72 @@ class Cervello private constructor(private val ctx: Context) {
         return parti.joinToString("\n\n")
     }
 
-    // ---------- meteo (Open-Meteo, gratuito e senza chiave) ----------
 
-    private fun meteo(cittaRichiesta: String, giorno: String): String {
-        val citta = cittaRichiesta.trim().ifBlank {
-            prefs.getString("citta", CITTA_PREDEFINITA) ?: CITTA_PREDEFINITA
-        }
-        val geo = JSONObject(
-            httpGet("https://geocoding-api.open-meteo.com/v1/search?count=1&language=it&name=" + codifica(citta))
-        )
-        val risultati = geo.optJSONArray("results")
-        if (risultati == null || risultati.length() == 0) return "Non trovo la città $citta."
-        val luogo = risultati.getJSONObject(0)
+    // ---------- collegamenti ai moduli (le funzioni ora vivono nei file dedicati) ----------
+    private fun modelloClaude() = ia.modelloClaude()
+    private fun postClaudeFlusso(corpo: JSONObject, alPezzo: (String) -> Unit): JSONObject = ia.postClaudeFlusso(corpo, alPezzo)
+    private fun postClaude(corpo: JSONObject): JSONObject = ia.postClaude(corpo)
+    private fun postGeminiFlusso(corpo: JSONObject, alPezzo: (String) -> Unit): JSONObject = ia.postGeminiFlusso(corpo, alPezzo)
+    private fun postGemini(corpo: JSONObject): JSONObject = ia.postGemini(corpo)
+    internal fun chiamaSemplice(richiesta: String, maxToken: Int): String = ia.chiamaSemplice(richiesta, maxToken)
+    internal fun geminiFile(file: List<Contenuto>, richiesta: String): String = ia.geminiFile(file, richiesta)
+    internal fun claudeFile(file: List<Contenuto>, richiesta: String): String = ia.claudeFile(file, richiesta)
+    internal fun visioneGemini(base64: String, richiesta: String): String = ia.visioneGemini(base64, richiesta)
+    internal fun visioneClaude(base64: String, richiesta: String): String = ia.visioneClaude(base64, richiesta)
+    fun usaClaude() = ia.usaClaude()
+    fun chiaveAttiva(): String = ia.chiaveAttiva()
+    private var pezziInviati: Boolean
+        get() = ia.pezziInviati
+        set(v) { ia.pezziInviati = v }
+    private fun leggiFile(nome: String): String? = memoria.leggiFile(nome)
+    private fun scriviFile(nome: String, testo: String) = memoria.scriviFile(nome, testo)
+    fun leggiLista(chiave: String): MutableList<String> = memoria.leggiLista(chiave)
+    internal fun salvaLista(chiave: String, lista: List<String>) = memoria.salvaLista(chiave, lista)
+    internal fun leggiDiario(): JSONArray = memoria.leggiDiario()
+    private fun scriviNelDiario(domanda: String, risposta: String, tipo: String = "ia") = memoria.scriviNelDiario(domanda, risposta, tipo)
+    private fun cercaNelDiario(testo: String): String = memoria.cercaNelDiario(testo)
+    fun leggiRoutine(): JSONArray = memoria.leggiRoutine()
+    private fun creaRoutine(nome: String, frase: String, istruzioni: String): String = memoria.creaRoutine(nome, frase, istruzioni)
+    private fun eliminaRoutine(nome: String): String = memoria.eliminaRoutine(nome)
+    internal fun ricordiPertinenti(tutti: List<String>, massimo: Int = 25): List<String> = memoria.ricordiPertinenti(tutti, massimo)
+    internal fun richiestePassateSimili(): String = memoria.richiestePassateSimili()
+    private fun cercaRicordi(testo: String): String = memoria.cercaRicordi(testo)
+    private fun ricorda(informazione: String): String = memoria.ricorda(informazione)
+    private fun imparaLezione(lezione: String): String = memoria.imparaLezione(lezione)
+    private fun dimentica(parola: String): String = memoria.dimentica(parola)
+    fun ultimeRichieste(quante: Int): String = memoria.ultimeRichieste(quante)
+    fun numeroRichieste() = memoria.numeroRichieste()
+    private fun aggiornaRiassunto(testoNuovo: String) = memoria.aggiornaRiassunto(testoNuovo)
+    private fun rifletti() = memoria.rifletti()
+    private fun avvia(intento: Intent, messaggioOk: String): String = telefono.avvia(intento, messaggioOk)
+    private fun codifica(testo: String): String = telefono.codifica(testo)
+    private fun normalizzaUrl(url: String): String = telefono.normalizzaUrl(url)
+    internal fun apriApp(nome: String): String = telefono.apriApp(nome)
+    private fun apriUrl(url: String, messaggioOk: String): String = telefono.apriUrl(url, messaggioOk)
+    internal fun impostaSveglia(ora: Int, minuti: Int, etichetta: String): String = telefono.impostaSveglia(ora, minuti, etichetta)
+    internal fun impostaTimer(secondi: Int, etichetta: String): String = telefono.impostaTimer(secondi, etichetta)
+    internal fun torcia(accendi: Boolean): String = telefono.torcia(accendi)
+    internal fun chiama(contatto: String): String = telefono.chiama(contatto)
+    private fun scriviSms(contatto: String, testo: String): String = telefono.scriviSms(contatto, testo)
+    private fun inviaWhatsapp(contatto: String, testo: String): String = telefono.inviaWhatsapp(contatto, testo)
+    private fun trovaEmail(chi: String): String? = telefono.trovaEmail(chi)
+    internal fun volumePercento(percento: Int): String = telefono.volumePercento(percento)
+    internal fun batteria(): String = telefono.batteria()
+    internal fun regolaVolume(azione: String, passi: Int): String = telefono.regolaVolume(azione, passi)
+    internal fun riproduci(cosa: String, app: String): String = telefono.riproduci(cosa, app)
+    internal fun controllaMusica(azione: String): String = telefono.controllaMusica(azione)
+    internal fun prendiNota(testo: String): String = telefono.prendiNota(testo)
+    private fun leggiNote(quante: Int): String = telefono.leggiNote(quante)
+    private fun meteo(cittaRichiesta: String, giorno: String): String = telefono.meteo(cittaRichiesta, giorno)
+    fun testoDellaPagina(url: String): String = contenuti.testoDellaPagina(url)
+    fun analizzaContenuto(c: Contenuto, istruzione: String): String = contenuti.analizzaContenuto(c, istruzione)
+    fun analizzaContenuti(lista: List<Contenuto>, istruzione: String, contesto: String): String = contenuti.analizzaContenuti(lista, istruzione, contesto)
+    fun riassuntoPerArchivio(c: Contenuto): String = contenuti.riassuntoPerArchivio(c)
+    fun traduci(testo: String, da: String, a: String): String = contenuti.traduci(testo, da, a)
+    fun resocontoSettimana(): String = contenuti.resocontoSettimana()
+    fun descriviFotogramma(base64: String, domanda: String, contesto: String): String = contenuti.descriviFotogramma(base64, domanda, contesto)
+    internal fun personalita(): String = prompt.personalita()
+    private fun promptDiSistema(): String = prompt.promptDiSistema()
+    private fun definizioniStrumenti(): JSONArray = DefinizioniStrumenti.definizioniStrumenti(::strumentoAttivo)
 
-        val dati = JSONObject(
-            httpGet(
-                "https://api.open-meteo.com/v1/forecast" +
-                    "?latitude=${luogo.getDouble("latitude")}&longitude=${luogo.getDouble("longitude")}" +
-                    "&current=temperature_2m,weather_code" +
-                    "&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max" +
-                    "&timezone=auto&forecast_days=3"
-            )
-        )
-
-        val g = giorno.lowercase(Locale.ITALIAN)
-        val indice = when {
-            g.contains("dopodomani") -> 2
-            g.contains("domani") -> 1
-            else -> 0
-        }
-        val giornaliero = dati.getJSONObject("daily")
-        val descrizione = descriviMeteo(giornaliero.getJSONArray("weather_code").getInt(indice))
-        val minima = giornaliero.getJSONArray("temperature_2m_min").getDouble(indice).roundToInt()
-        val massima = giornaliero.getJSONArray("temperature_2m_max").getDouble(indice).roundToInt()
-        val pioggia = giornaliero.getJSONArray("precipitation_probability_max").optInt(indice, 0)
-        val nomeGiorno = listOf("oggi", "domani", "dopodomani")[indice]
-
-        var testo = "${luogo.getString("name")}, $nomeGiorno: $descrizione, minima $minima gradi, " +
-            "massima $massima gradi, probabilità di pioggia $pioggia per cento."
-        if (indice == 0) {
-            dati.optJSONObject("current")?.let {
-                testo += " Adesso ci sono ${it.getDouble("temperature_2m").roundToInt()} gradi."
-            }
-        }
-        return testo
-    }
-
-    private fun descriviMeteo(codice: Int): String = when (codice) {
-        0 -> "sereno"
-        1 -> "prevalentemente sereno"
-        2 -> "parzialmente nuvoloso"
-        3 -> "coperto"
-        45, 48 -> "nebbia"
-        51, 53, 55 -> "pioggerella"
-        56, 57 -> "pioggerella gelata"
-        61 -> "pioggia debole"
-        63 -> "pioggia"
-        65 -> "pioggia forte"
-        66, 67 -> "pioggia gelata"
-        71 -> "neve debole"
-        73 -> "neve"
-        75 -> "neve forte"
-        77 -> "nevischio"
-        80, 81 -> "rovesci"
-        82 -> "rovesci violenti"
-        85, 86 -> "rovesci di neve"
-        95 -> "temporale"
-        96, 99 -> "temporale con grandine"
-        else -> "tempo variabile"
-    }
-
-    // ---------- volume e musica ----------
-
-    internal fun regolaVolume(azione: String, passi: Int): String = suUi {
-        val audio = ctx.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-        val flusso = AudioManager.STREAM_MUSIC
-        val a = azione.lowercase(Locale.ITALIAN)
-        val n = passi.coerceIn(1, 15)
-        when {
-            a.contains("mut") || a.contains("silenz") -> {
-                if (Build.VERSION.SDK_INT >= 23) {
-                    audio.adjustStreamVolume(flusso, AudioManager.ADJUST_TOGGLE_MUTE, AudioManager.FLAG_SHOW_UI)
-                } else {
-                    audio.setStreamVolume(flusso, 0, AudioManager.FLAG_SHOW_UI)
-                }
-            }
-            a.contains("mass") -> audio.setStreamVolume(flusso, audio.getStreamMaxVolume(flusso), AudioManager.FLAG_SHOW_UI)
-            a.contains("abbass") || a.contains("giù") || a.contains("giu") -> repeat(n) {
-                audio.adjustStreamVolume(flusso, AudioManager.ADJUST_LOWER, if (it == n - 1) AudioManager.FLAG_SHOW_UI else 0)
-            }
-            else -> repeat(n) {
-                audio.adjustStreamVolume(flusso, AudioManager.ADJUST_RAISE, if (it == n - 1) AudioManager.FLAG_SHOW_UI else 0)
-            }
-        }
-        val percentuale = audio.getStreamVolume(flusso) * 100 / audio.getStreamMaxVolume(flusso).coerceAtLeast(1)
-        "Volume al $percentuale per cento."
-    }
-
-    private val APP_MUSICA = linkedMapOf(
-        "spotify" to "com.spotify.music",
-        "youtube music" to "com.google.android.apps.youtube.music",
-        "youtube" to "com.google.android.youtube",
-        "amazon music" to "com.amazon.mp3",
-        "apple music" to "com.apple.android.music",
-        "deezer" to "deezer.android.app"
-    )
-
-    private fun installata(pacchetto: String) = try {
-        ctx.packageManager.getLaunchIntentForPackage(pacchetto) != null
-    } catch (e: Exception) {
-        false
-    }
-
-    /** L'app musicale da usare: quella chiesta, quella preferita, oppure la prima installata. */
-    private fun appMusica(richiesta: String): Pair<String, String>? {
-        val r = richiesta.lowercase(Locale.ITALIAN).trim()
-        APP_MUSICA.entries.firstOrNull { r.isNotEmpty() && r.contains(it.key) && installata(it.value) }?.let { return it.key to it.value }
-        val preferita = prefs.getString("app_musica", "") ?: ""
-        APP_MUSICA.entries.firstOrNull { it.key == preferita && installata(it.value) }?.let { return it.key to it.value }
-        return APP_MUSICA.entries.firstOrNull { installata(it.value) }?.let { it.key to it.value }
-    }
-
-    private fun premiTastoMusica(tasto: Int) {
-        val audio = ctx.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-        audio.dispatchMediaKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, tasto))
-        audio.dispatchMediaKeyEvent(KeyEvent(KeyEvent.ACTION_UP, tasto))
-    }
-
-    private fun musicaInRiproduzione() = (ctx.getSystemService(Context.AUDIO_SERVICE) as AudioManager).isMusicActive
-
-    /** Fa partire una canzone, un artista, un album, una playlist o un genere nell'app musicale. */
-    internal fun riproduci(cosa: String, app: String): String {
-        val (nomeApp, pacchetto) = appMusica(app) ?: return "Non trovo app musicali installate, come Spotify o YouTube Music."
-        prefs.edit().putString("app_musica", nomeApp).apply()
-        val ricerca = cosa.trim()
-        if (ricerca.isEmpty()) {
-            // solo "metti la musica": apro l'app e premo play
-            val lancio = ctx.packageManager.getLaunchIntentForPackage(pacchetto) ?: return "Non riesco ad aprire $nomeApp."
-            avvia(lancio, "ok")
-            Thread.sleep(3000)
-            premiTastoMusica(KeyEvent.KEYCODE_MEDIA_PLAY)
-            Thread.sleep(1500)
-            return if (musicaInRiproduzione()) "Musica avviata su $nomeApp." else "Ho aperto $nomeApp ma la musica non è partita: dimmi cosa vuoi ascoltare."
-        }
-        // Richiesta standard di Android "riproduci da ricerca", supportata da Spotify, YouTube Music e altre
-        val intento = Intent(android.provider.MediaStore.INTENT_ACTION_MEDIA_PLAY_FROM_SEARCH)
-            .putExtra(android.app.SearchManager.QUERY, ricerca)
-            .putExtra(android.provider.MediaStore.EXTRA_MEDIA_FOCUS, "vnd.android.cursor.item/*")
-            .setPackage(pacchetto)
-        val esito = avvia(intento, "ok")
-        if (esito != "ok") {
-            // l'app non supporta la ricerca: apro la ricerca nell'app
-            val ricercaWeb = when (nomeApp) {
-                "spotify" -> "spotify:search:" + Uri.encode(ricerca)
-                "youtube music" -> "https://music.youtube.com/search?q=" + Uri.encode(ricerca)
-                else -> "https://www.youtube.com/results?search_query=" + Uri.encode(ricerca)
-            }
-            avvia(Intent(Intent.ACTION_VIEW, Uri.parse(ricercaWeb)).setPackage(pacchetto), "ok")
-        }
-        Thread.sleep(3500)
-        if (!musicaInRiproduzione()) premiTastoMusica(KeyEvent.KEYCODE_MEDIA_PLAY)
-        Thread.sleep(1500)
-        if (!musicaInRiproduzione()) {
-            // ultimo tentativo: tocco il pulsante di riproduzione sullo schermo
-            AccessibilitaJarvis.istanza?.let { acc ->
-                for (pulsante in listOf("Riproduci", "Play", "Riproduzione casuale", "Shuffle", "Ascolta")) {
-                    if (acc.tocca(pulsante).startsWith("Ho toccato")) break
-                }
-            }
-            Thread.sleep(1500)
-        }
-        return if (musicaInRiproduzione()) "Metto $ricerca su $nomeApp."
-        else "Ho cercato $ricerca su $nomeApp: scegli il brano da far partire, oppure attiva il controllo delle app e lo faccio io."
-    }
-
-    internal fun controllaMusica(azione: String): String {
-        val a = azione.lowercase(Locale.ITALIAN)
-        val vuolePlay = !(a.contains("paus") || a.contains("stop") || a.contains("ferma") || a.contains("avanti") ||
-            a.contains("success") || a.contains("prossim") || a.contains("indietro") || a.contains("precedent"))
-        // "play" senza musica attiva: apro l'app musicale e faccio partire
-        if (vuolePlay && !musicaInRiproduzione()) {
-            premiTastoMusica(KeyEvent.KEYCODE_MEDIA_PLAY)
-            Thread.sleep(1200)
-            if (!musicaInRiproduzione()) return riproduci("", "")
-            return "Riprendo la riproduzione."
-        }
-        return controllaMusicaTasti(azione)
-    }
-
-    private fun controllaMusicaTasti(azione: String): String = suUi {
-        val audio = ctx.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-        val a = azione.lowercase(Locale.ITALIAN)
-        val (tasto, messaggio) = when {
-            a.contains("paus") || a.contains("stop") || a.contains("ferma") -> KeyEvent.KEYCODE_MEDIA_PAUSE to "Pausa."
-            a.contains("avanti") || a.contains("success") || a.contains("prossim") -> KeyEvent.KEYCODE_MEDIA_NEXT to "Brano successivo."
-            a.contains("indietro") || a.contains("precedent") -> KeyEvent.KEYCODE_MEDIA_PREVIOUS to "Brano precedente."
-            else -> KeyEvent.KEYCODE_MEDIA_PLAY to "Riprendo la riproduzione."
-        }
-        audio.dispatchMediaKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, tasto))
-        audio.dispatchMediaKeyEvent(KeyEvent(KeyEvent.ACTION_UP, tasto))
-        messaggio
-    }
-
-    // ---------- note ----------
-
-    internal fun prendiNota(testo: String): String {
-        if (testo.isBlank()) return "La nota è vuota."
-        val data = SimpleDateFormat("dd/MM HH:mm", Locale.ITALIAN).format(Date())
-        val note = leggiLista("note")
-        note.add("$data - ${testo.trim()}")
-        salvaLista("note", note)
-        return "Nota salvata."
-    }
-
-    private fun leggiNote(quante: Int): String {
-        val note = leggiLista("note")
-        if (note.isEmpty()) return "Non ci sono note."
-        return note.takeLast(quante.coerceIn(1, 20)).joinToString("\n")
-    }
-
-    // ---------- memoria: ricordi, lezioni, dimenticare ----------
-
-    private fun ricorda(informazione: String): String {
-        if (privata) return "Modalità privata: non salvo niente."
-        // i ricordi dei familiari si riconoscono dal nome tra parentesi quadre
-        val voce = if (chiParla.isNotEmpty()) "[$chiParla] $informazione" else informazione
-        return if (aggiungiSenzaDoppioni("memoria", voce, MAX_RICORDI)) "Memorizzato." else "Lo sapevo già."
-    }
-
-    private fun imparaLezione(lezione: String): String =
-        if (privata) "Modalità privata: non salvo niente." else if (aggiungiSenzaDoppioni("lezioni", lezione, MAX_LEZIONI)) "Lezione imparata." else "La conoscevo già."
-
-    private fun dimentica(parola: String): String {
-        val p = parola.lowercase(Locale.ITALIAN).trim()
-        if (p.isEmpty()) return "Dimmi cosa devo dimenticare."
-        if (p == "tutto") {
-            prefs.edit().remove("memoria").remove("lezioni").remove("routine").remove("riassunto").apply()
-            return "Ho cancellato ricordi, lezioni, routine e riassunto."
-        }
-        var tolti = 0
-        for (chiave in listOf("memoria", "lezioni")) {
-            val prima = leggiLista(chiave)
-            val dopo = prima.filterNot { it.lowercase(Locale.ITALIAN).contains(p) }
-            tolti += prima.size - dopo.size
-            salvaLista(chiave, dopo)
-        }
-        val routine = leggiRoutine()
-        val rimaste = JSONArray()
-        for (i in 0 until routine.length()) {
-            val r = routine.getJSONObject(i)
-            if (r.toString().lowercase(Locale.ITALIAN).contains(p)) tolti++ else rimaste.put(r)
-        }
-        prefs.edit().putString("routine", rimaste.toString()).apply()
-        return if (tolti > 0) "Fatto, l'ho dimenticato." else "Non avevo niente su $parola."
-    }
 }
