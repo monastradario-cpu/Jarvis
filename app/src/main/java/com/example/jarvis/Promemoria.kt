@@ -365,7 +365,7 @@ object Promemoria {
         val gestore = ctx.getSystemService(NotificationManager::class.java)
         if (Build.VERSION.SDK_INT >= 26) {
             gestore.createNotificationChannel(
-                NotificationChannel(CANALE, "Promemoria di Jarvis", NotificationManager.IMPORTANCE_HIGH)
+                NotificationChannel(CANALE, "Promemoria di ${Nome.attuale}", NotificationManager.IMPORTANCE_HIGH)
             )
         }
         val intento = PendingIntent.getActivity(

@@ -191,7 +191,7 @@ class AzioniTelefono(private val c: Cervello) {
 
     internal fun chiediPermessoContatti(): String {
         val schermata = uscita
-            ?: return "Mi serve il permesso di leggere la rubrica: apri l'app Jarvis e ripeti la richiesta da lì."
+            ?: return "Mi serve il permesso di leggere la rubrica: apri l'app ${Nome.PREDEFINITO} e ripeti la richiesta da lì."
         principale.post { schermata.chiediPermesso(Manifest.permission.READ_CONTACTS) }
         return "Mi serve il permesso di leggere la rubrica. Concedilo e ripeti la richiesta."
     }

@@ -101,9 +101,9 @@ class Memoria(private val c: Cervello) {
         val riassunto = prefs.getString("riassunto", "") ?: ""
         val routine = leggiRoutine()
         val nomiRoutine = (0 until routine.length()).joinToString(", ") { routine.getJSONObject(it).optString("nome") }
-        val richiesta = "Sei il modulo notturno di auto-miglioramento di Jarvis, un assistente vocale su telefono Android.\n" +
+        val richiesta = "Sei il modulo notturno di auto-miglioramento di ${Nome.attuale}, un assistente vocale su telefono Android.\n" +
             "Riassunto attuale delle conversazioni passate: ${riassunto.ifBlank { "(vuoto)" }}\n" +
-            "Cose che Jarvis sa già dell'utente: ${leggiLista("memoria").takeLast(80).joinToString("; ").ifBlank { "niente" }}\n" +
+            "Cose che ${Nome.attuale} sa già dell'utente: ${leggiLista("memoria").takeLast(80).joinToString("; ").ifBlank { "niente" }}\n" +
             "Lezioni già imparate: ${leggiLista("lezioni").joinToString("; ").ifBlank { "nessuna" }}\n" +
             "Routine esistenti: ${nomiRoutine.ifBlank { "nessuna" }}\n\n" +
             "Richieste dall'ultima elaborazione (data | richiesta | strumenti | risposta):\n${righe.toString().takeLast(9000)}\n" +
@@ -392,7 +392,7 @@ class Memoria(private val c: Cervello) {
 
     internal fun aggiornaRiassunto(testoNuovo: String) {
         val vecchio = prefs.getString("riassunto", "") ?: ""
-        val richiesta = "Questo è il riassunto delle conversazioni passate tra l'utente e Jarvis, il suo assistente vocale:\n" +
+        val richiesta = "Questo è il riassunto delle conversazioni passate tra l'utente e ${Nome.attuale}, il suo assistente vocale:\n" +
             vecchio.ifBlank { "(vuoto)" } +
             "\n\nQueste sono conversazioni più recenti da aggiungere:\n$testoNuovo\n\n" +
             "Scrivi il riassunto aggiornato in italiano, al massimo 1000 caratteri. " +
@@ -418,8 +418,8 @@ class Memoria(private val c: Cervello) {
         val routine = leggiRoutine()
         val nomiRoutine = (0 until routine.length()).joinToString(", ") { routine.getJSONObject(it).optString("nome") }
 
-        val richiesta = "Sei il modulo di auto-miglioramento di Jarvis, un assistente vocale su telefono Android.\n" +
-            "Cose che Jarvis sa già dell'utente: ${leggiLista("memoria").joinToString("; ").ifBlank { "niente" }}\n" +
+        val richiesta = "Sei il modulo di auto-miglioramento di ${Nome.attuale}, un assistente vocale su telefono Android.\n" +
+            "Cose che ${Nome.attuale} sa già dell'utente: ${leggiLista("memoria").joinToString("; ").ifBlank { "niente" }}\n" +
             "Lezioni già imparate: ${leggiLista("lezioni").joinToString("; ").ifBlank { "nessuna" }}\n" +
             "Routine esistenti: ${nomiRoutine.ifBlank { "nessuna" }}\n\n" +
             "Ultime richieste (data | richiesta | strumenti usati | risposta):\n$righe\n" +

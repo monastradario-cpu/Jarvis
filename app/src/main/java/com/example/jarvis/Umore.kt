@@ -24,9 +24,9 @@ object Umore {
     /** Opzioni della pagina GIOCHI › JARVIS VIVO: chiave, testo, predefinito. */
     val OPZIONI = listOf(
         Triple("vivo_umori", "Umori: cambia ritmo e colori durante la giornata", true),
-        Triple("vivo_scuoti", "Scuoti il telefono: la sfera si agita e Jarvis protesta", true),
+        Triple("vivo_scuoti", "Scuoti il telefono: la sfera si agita e lui protesta", true),
         Triple("vivo_inclina", "Inclina il telefono: la sfera rotola", true),
-        Triple("vivo_giu", "A faccia in giù: Jarvis si zittisce e dorme", true),
+        Triple("vivo_giu", "A faccia in giù: si zittisce e dorme", true),
         Triple("vivo_sorprese", "Sorprese: curiosità del giorno e auguri nelle feste", true)
     )
 

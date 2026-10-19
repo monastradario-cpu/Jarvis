@@ -180,7 +180,7 @@ object DefinizioniStrumenti {
                     p("giorni", "integer", "Quanti giorni a partire da quello, di solito 1")
                 ), listOf("cerca")),
             strumento("crea_calendario", "Crea un calendario nuovo sul telefono, dove andranno i nuovi appuntamenti.",
-                listOf(p("nome", "string", "Nome del calendario, es. Jarvis o Lavoro")), listOf("nome")),
+                listOf(p("nome", "string", "Nome del calendario, es. ${Nome.attuale} o Lavoro")), listOf("nome")),
             strumento("crea_appuntamento", "Aggiunge un appuntamento al calendario del telefono.",
                 listOf(
                     p("titolo", "string", "Titolo, es. Dentista"),
@@ -203,7 +203,7 @@ object DefinizioniStrumenti {
             strumento("dove_sono", "Dice dove si trova l'utente in questo momento.",
                 listOf(p("dettaglio", "string", "Facoltativo"))),
             // --- Promemoria ---
-            strumento("promemoria", "Promemoria a una data e ora, anche ripetuto. Jarvis avvisa con una notifica e a voce.",
+            strumento("promemoria", "Promemoria a una data e ora, anche ripetuto. ${Nome.attuale} avvisa con una notifica e a voce.",
                 listOf(
                     p("testo", "string", "Cosa ricordare"),
                     p("giorno", "string", "oggi, domani, un giorno della settimana o una data AAAA-MM-GG"),
@@ -221,7 +221,7 @@ object DefinizioniStrumenti {
             strumento("cancella_promemoria", "Cancella i promemoria che contengono una parola, oppure tutti.",
                 listOf(p("parola", "string", "Parola da cercare, oppure tutti")), listOf("parola")),
             // --- Vista ---
-            strumento("guarda", "Apre la fotocamera: l'utente scatta una foto e Jarvis la descrive, legge i testi o li traduce.",
+            strumento("guarda", "Apre la fotocamera: l'utente scatta una foto e ${Nome.attuale} la descrive, legge i testi o li traduce.",
                 listOf(p("domanda", "string", "Cosa vuole sapere l'utente, es. cosa vedi, leggimi questo, traduci")), listOf("domanda")),
             // --- Mattino ---
             strumento("riepilogo_giornata", "Raccoglie meteo, impegni, promemoria, messaggi e notizie principali di oggi.",
@@ -239,7 +239,7 @@ object DefinizioniStrumenti {
                 "Crea o aggiorna una routine: una frase dell'utente che fa partire una sequenza di azioni.",
                 listOf(
                     p("nome", "string", "Nome breve, es. buonanotte"),
-                    p("frase", "string", "Frase che l'utente dirà, es. buonanotte Jarvis"),
+                    p("frase", "string", "Frase che l'utente dirà, es. buonanotte ${Nome.attuale}"),
                     p("istruzioni", "string", "Cosa fare passo per passo, es. spegni la torcia, sveglia alle 7, volume al minimo")
                 ), listOf("nome", "frase", "istruzioni")),
             strumento("elimina_routine", "Elimina una routine.",
@@ -304,7 +304,7 @@ object DefinizioniStrumenti {
             strumento("luminosita", "Cambia la luminosità dello schermo.",
                 listOf(p("valore", "string", "percentuale (es. 40), alza, abbassa, massima, minima oppure automatica")), listOf("valore")),
             // --- Automazioni ---
-            strumento("crea_automazione", "Crea un'automazione: quando succede qualcosa, Jarvis esegue da solo delle istruzioni.",
+            strumento("crea_automazione", "Crea un'automazione: quando succede qualcosa, ${Nome.attuale} esegue da solo delle istruzioni.",
                 listOf(
                     p("nome", "string", "Nome breve, es. arrivo a casa"),
                     p("quando", "string", "orario, arrivo, uscita, batteria, auto, fine_auto, cuffie, carica oppure fine_carica"),
@@ -352,7 +352,7 @@ object DefinizioniStrumenti {
                 ), listOf("documento", "domanda")),
             strumento("archivio_elimina", "Toglie un documento dall'archivio.",
                 listOf(p("documento", "string", "Nome del documento")), listOf("documento")),
-            strumento("cambia_voce", "Cambia la voce di Jarvis, la velocità o il tono quando l'utente lo chiede.",
+            strumento("cambia_voce", "Cambia la voce di ${Nome.attuale}, la velocità o il tono quando l'utente lo chiede.",
                 listOf(
                     p("voce", "string", "miro, paola, riccardo, dii, maschile, femminile, telefono, oppure prossima per cambiarla; vuoto se non cambia"),
                     p("velocita", "string", "più veloce, più lenta oppure normale; vuoto se non cambia"),

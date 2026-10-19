@@ -19,13 +19,13 @@ object Trofei {
     /** I trofei: si sbloccano quando un contatore raggiunge la soglia. */
     val TUTTI = listOf(
         Trofeo("prima", "Prima chiacchierata", "Fai la prima richiesta", "richieste", 1),
-        Trofeo("cento", "Cento richieste", "Fai 100 richieste a Jarvis", "richieste", 100),
+        Trofeo("cento", "Cento richieste", "Fai 100 richieste al tuo assistente", "richieste", 100),
         Trofeo("mille", "Inseparabili", "Fai 1000 richieste", "richieste", 1000),
         Trofeo("mattiniero", "Mattiniero", "10 richieste prima delle 8", "mattino", 10),
         Trofeo("nottambulo", "Nottambulo", "10 richieste dopo mezzanotte", "notte", 10),
         Trofeo("senza_rete", "Senza rete", "50 comandi fatti senza l'IA", "locali", 50),
         Trofeo("esploratore", "Esploratore", "Usa 10 funzioni diverse", "strumenti_diversi", 10),
-        Trofeo("serie3", "Tre di fila", "Usa Jarvis 3 giorni di fila", "serie", 3),
+        Trofeo("serie3", "Tre di fila", "Usalo 3 giorni di fila", "serie", 3),
         Trofeo("serie7", "Una settimana", "7 giorni di fila", "serie", 7),
         Trofeo("serie30", "Un mese insieme", "30 giorni di fila", "serie", 30),
         Trofeo("giocatore", "Giocatore", "Gioca la prima partita", "giochi", 1),
@@ -34,13 +34,13 @@ object Trofei {
         Trofeo("impiccato_perfetto", "Senza un errore", "Vinci all'impiccato senza errori", "impiccato_perfetto", 1),
         Trofeo("indovino", "Indovino", "Risolvi 10 indovinelli", "indovinello_risolto", 10),
         Trofeo("quiz_perfetto", "Quiz perfetto", "5 risposte giuste su 5", "quiz_perfetto", 1),
-        Trofeo("sfuggente", "Imprendibile", "Jarvis non indovina in 20 domande", "venti_vinte", 1),
+        Trofeo("sfuggente", "Imprendibile", "Non si fa indovinare in 20 domande", "venti_vinte", 1),
         Trofeo("narratore", "Fine della storia", "Arriva in fondo a una storia a bivi", "storia_finita", 1),
         Trofeo("eco", "Memoria di ferro", "Arriva a 10 a Eco di luce", "eco_10", 1),
         Trofeo("acchiappa", "Riflessi pronti", "25 punti ad Acchiappa", "acchiappa_25", 1),
         Trofeo("ritmo", "Senso del ritmo", "18 colpi su 20 a Ritmo", "ritmo_18", 1),
         Trofeo("equilibrio", "Mano ferma", "20 secondi in equilibrio", "equilibrio_20", 1),
-        Trofeo("scuotitore", "Non scuotermi!", "Scuoti Jarvis 10 volte", "scossa", 10),
+        Trofeo("scuotitore", "Non scuotermi!", "Scuoti il telefono 10 volte", "scossa", 10),
         Trofeo("stilista", "Stilista", "Salva una personalizzazione", "personalizza", 1)
     )
 
@@ -54,7 +54,7 @@ object Trofei {
         Sfida("Gioca a un minigioco con la sfera", "minigioco", 1, 20),
         Sfida("Finisci un quiz", "quiz_finito", 1, 40),
         Sfida("Gioca a due giochi diversi", "giochi", 2, 40),
-        Sfida("Fai 10 richieste a Jarvis", "richieste", 10, 30)
+        Sfida("Fai 10 richieste", "richieste", 10, 30)
     )
 
     private val NOMI_LIVELLI = listOf(

@@ -28,7 +28,7 @@ object Sistema {
         if (Build.VERSION.SDK_INT < 23) return "Questo telefono non permette di controllare il non disturbare."
         if (!accessoNonDisturbare(ctx)) {
             apri(ctx, Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS))
-            return "Per il non disturbare mi serve un permesso: ho aperto la pagina, attiva Jarvis e ripeti la richiesta."
+            return "Per il non disturbare mi serve un permesso: ho aperto la pagina, attiva ${Nome.PREDEFINITO} e ripeti la richiesta."
         }
         val n = ctx.getSystemService(NotificationManager::class.java)
         n.setInterruptionFilter(if (attiva) NotificationManager.INTERRUPTION_FILTER_PRIORITY else NotificationManager.INTERRUPTION_FILTER_ALL)
@@ -45,21 +45,21 @@ object Sistema {
         }
         if (valore == AudioManager.RINGER_MODE_SILENT && !accessoNonDisturbare(ctx)) {
             apri(ctx, Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS))
-            return "Per mettere il silenzioso mi serve il permesso del non disturbare: attiva Jarvis e ripeti."
+            return "Per mettere il silenzioso mi serve il permesso del non disturbare: attiva ${Nome.PREDEFINITO} e ripeti."
         }
         return try {
             audio.ringerMode = valore
             testo
         } catch (e: SecurityException) {
             apri(ctx, Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS))
-            "Mi serve il permesso del non disturbare: attiva Jarvis e ripeti."
+            "Mi serve il permesso del non disturbare: attiva ${Nome.PREDEFINITO} e ripeti."
         }
     }
 
     fun luminosita(ctx: Context, valore: String): String {
         if (Build.VERSION.SDK_INT >= 23 && !Settings.System.canWrite(ctx)) {
             apri(ctx, Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS, Uri.parse("package:${ctx.packageName}")))
-            return "Per la luminosità mi serve il permesso di modificare le impostazioni: attivalo per Jarvis e ripeti."
+            return "Per la luminosità mi serve il permesso di modificare le impostazioni: attivalo per ${Nome.PREDEFINITO} e ripeti."
         }
         val r = ctx.contentResolver
         val v = valore.lowercase(Locale.ITALIAN)

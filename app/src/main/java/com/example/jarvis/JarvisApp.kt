@@ -24,6 +24,7 @@ class JarvisApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        Nome.carica(this)
         val prefs = getSharedPreferences("jarvis", Context.MODE_PRIVATE)
 
         // Se l'app si è chiusa mentre la voce neurale lavorava (errore nativo), torno alla voce del telefono
@@ -54,7 +55,7 @@ class JarvisApp : Application() {
             val info = packageManager.getPackageInfo(packageName, 0)
             if (Build.VERSION.SDK_INT >= 28) info.longVersionCode.toString() else @Suppress("DEPRECATION") info.versionCode.toString()
         } catch (e: Exception) { "?" }
-        return "Jarvis versione $versione · Android ${Build.VERSION.RELEASE} · ${Build.MANUFACTURER} ${Build.MODEL}\n" +
+        return "${Nome.attuale} versione $versione · Android ${Build.VERSION.RELEASE} · ${Build.MANUFACTURER} ${Build.MODEL}\n" +
             SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.ITALIAN).format(Date()) + "\n\n"
     }
 }

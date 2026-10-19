@@ -302,7 +302,7 @@ class CollaudoJarvis {
         JarvisApp.errore(ctx).delete()
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             Thread.sleep(1500)
-            for (scheda in listOf("menu", "home", "pulsanti", "sfondo", "suoni")) {
+            for (scheda in listOf("nome", "menu", "home", "pulsanti", "sfondo", "suoni")) {
                 scenario.onActivity { a ->
                     val m = MainActivity::class.java.getDeclaredMethod("mostraPersonalizza", String::class.java)
                     m.isAccessible = true
@@ -330,6 +330,21 @@ class CollaudoJarvis {
         }
         ActivityScenario.launch(MinigiochiActivity::class.java).use { Thread.sleep(800) }
         senzaErrori()
+    }
+
+    // ---------- nome scelto da ognuno ----------
+
+    @Test fun h00_nome() {
+        assertEquals("Orione", Nome.normalizza("  orione  della notte"))
+        assertEquals("Venerdì", Nome.normalizza("VENERDÌ!"))
+        assertEquals(Nome.PREDEFINITO, Nome.normalizza("   "))
+        Nome.imposta(ctx, "max")
+        assertEquals("Max", Cervello.prendi(ctx).nomeAssistente())
+        assertEquals("max", ImprontaVocale.parola(ctx))
+        assertTrue(ImprontaVocale.grammatica(ctx).contains("ehi max"))
+        prefs.edit().remove("nome_assistente").commit()
+        Nome.carica(ctx)
+        assertEquals(Nome.PREDEFINITO, Nome.attuale)
     }
 
     // ---------- Nucleo 3D ----------

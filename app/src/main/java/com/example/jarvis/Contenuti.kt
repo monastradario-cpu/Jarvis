@@ -146,7 +146,7 @@ class Contenuti(private val c: Cervello) {
 
     /** Vista dal vivo: descrive un fotogramma della fotocamera (usata da VistaDalVivo). */
     fun descriviFotogramma(base64: String, domanda: String, contesto: String): String {
-        val richiesta = "Sei gli occhi di Jarvis, un assistente vocale. L'utente sta inquadrando con la fotocamera " +
+        val richiesta = "Sei gli occhi di ${Nome.attuale}, un assistente vocale. L'utente sta inquadrando con la fotocamera " +
             "e chiede: \"${domanda.ifBlank { "cosa vedi?" }}\". " +
             (if (contesto.isNotBlank()) "Domande e risposte precedenti: $contesto. " else "") +
             "Rispondi in italiano, in modo concreto e breve (al massimo 3 frasi, da leggere ad alta voce). " +

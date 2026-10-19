@@ -3,5 +3,5 @@
 <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
     <background android:drawable="@color/nero" />
     <foreground android:drawable="@drawable/ic_jarvis_primo_piano" />
-    <monochrome android:drawable="@drawable/ic_jarvis_primo_piano" />
+    <monochrome android:drawable="@drawable/ic_jarvis_mono" />
 </adaptive-icon>

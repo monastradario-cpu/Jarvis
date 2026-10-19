@@ -32,15 +32,17 @@ class PannelloPersonalizza(
     private val altezzaAperto: Int,
     private val aggiorna: () -> Unit,
     private val scegliFoto: () -> Unit,
+    private val cambiaNome: (String) -> String,
+    private val provaNome: () -> Unit,
     private val alChiudere: () -> Unit
 ) {
 
-    val SCHEDE = listOf("menu" to "MENÙ", "home" to "HOME", "pulsanti" to "PULSANTI", "sfondo" to "SFONDO", "suoni" to "SUONI")
+    val SCHEDE = listOf("nome" to "NOME", "menu" to "MENÙ", "home" to "HOME", "pulsanti" to "PULSANTI", "sfondo" to "SFONDO", "suoni" to "SUONI")
 
     private fun dp(v: Int) = (v * a.resources.displayMetrics.density).toInt()
 
     private var confermato = Personalizza.istantanea(prefs)
-    private var scheda = "menu"
+    private var scheda = "nome"
     private var ridotto = false
 
     val vista = LinearLayout(a).apply {
@@ -170,6 +172,7 @@ class PannelloPersonalizza(
         }
         contenuto.removeAllViews()
         when (scheda) {
+            "nome" -> schedaNome()
             "menu" -> schedaMenu()
             "home" -> schedaHome()
             "pulsanti" -> schedaPulsanti()
@@ -177,6 +180,28 @@ class PannelloPersonalizza(
             else -> schedaSuoni()
         }
         if (stessa) scorri.post { scorri.scrollTo(0, y) } else scorri.scrollTo(0, 0)
+    }
+
+    private fun schedaNome() {
+        titolo("Come si chiama il tuo assistente")
+        nota("Scegli il nome che vuoi: comparirà in alto, nelle notifiche e nel widget, e sarà la parola per chiamarlo " +
+            "(«Ehi ${Nome.attuale}»). Una sola parola. Meglio una parola italiana vera, di 2 o 3 sillabe, che non si dice spesso: " +
+            "così il riconoscimento offline la capisce bene e non si attiva per sbaglio.")
+        val campo = campo("Nome").apply { setText(Nome.attuale) }
+        bottone("Usa questo nome") {
+            val n = cambiaNome(campo.text.toString())
+            campo.setText(n)
+            stato.text = "Da ora mi chiamo $n ✓  Per chiamarmi: «Ehi $n»."
+            stato.setTextColor(tema.accento)
+        }
+        bottone("Prova il nome a voce (parla per 5 secondi)") {
+            val n = cambiaNome(campo.text.toString())
+            campo.setText(n)
+            provaNome()
+        }
+        titolo("Idee")
+        nota("Guizzo, Orione, Atlante, Vega, Aurelio, Nucleo… oppure il nome che preferisci. " +
+            "Sotto l'icona del telefono resta «${Nome.PREDEFINITO}»: Android non permette di cambiarlo dall'app.")
     }
 
     private fun schedaMenu() {
@@ -252,7 +277,7 @@ class PannelloPersonalizza(
     private fun schedaPulsanti() {
         val scelti = Personalizza.pulsanti(prefs).map { it.id }
         titolo("Pulsanti rapidi · ${scelti.size} di ${Personalizza.MAX_PULSANTI}")
-        nota("Compaiono sopra il campo di testo: un tocco e Jarvis esegue, senza parlare.")
+        nota("Compaiono sopra il campo di testo: un tocco e ${Nome.attuale} esegue, senza parlare.")
         for (pu in Personalizza.tuttiIPulsanti(prefs)) {
             contenuto.addView(CheckBox(a).apply {
                 text = if (pu.id.startsWith("mio")) "${pu.etichetta}  ·  «${pu.frase}»" else pu.etichetta
@@ -275,7 +300,7 @@ class PannelloPersonalizza(
             })
         }
         titolo("Inventa un pulsante")
-        nota("Scrivi cosa compare sul pulsante e la frase che Jarvis deve eseguire, per esempio «Buonanotte» e «spegni le luci e metti la sveglia alle 7».")
+        nota("Scrivi cosa compare sul pulsante e la frase che ${Nome.attuale} deve eseguire, per esempio «Buonanotte» e «spegni le luci e metti la sveglia alle 7».")
         val etichetta = campo("Testo del pulsante")
         val frase = campo("Frase da eseguire")
         bottone("Aggiungi pulsante") {
@@ -344,7 +369,7 @@ class PannelloPersonalizza(
     }
 
     private fun schedaSuoni() {
-        titolo("Quando Jarvis si sveglia")
+        titolo("Quando ${Nome.attuale} si sveglia")
         scelta(Suoni.SUONI, prefs.getString("suono_sveglia", "bip") ?: "bip") { v ->
             prefs.edit().putString("suono_sveglia", v).apply()
             Suoni.suona(a, v)
@@ -369,7 +394,7 @@ class PannelloPersonalizza(
                 cambiato()
             }
         }
-        cursore("Volume dei suoni di Jarvis", 0, 100, prefs.getInt("suoni_volume", 45), "%", allaFine = { Suoni.suona(a, "bip") }) { v ->
+        cursore("Volume dei suoni di ${Nome.attuale}", 0, 100, prefs.getInt("suoni_volume", 45), "%", allaFine = { Suoni.suona(a, "bip") }) { v ->
             prefs.edit().putInt("suoni_volume", v).apply()
             cambiato()
         }

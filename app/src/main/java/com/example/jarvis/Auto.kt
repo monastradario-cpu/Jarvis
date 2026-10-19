@@ -93,7 +93,7 @@ object Auto {
     private fun notificaAuto(ctx: Context) {
         val gestore = ctx.getSystemService(NotificationManager::class.java)
         if (Build.VERSION.SDK_INT >= 26) {
-            gestore.createNotificationChannel(NotificationChannel(CANALE, "Jarvis in auto", NotificationManager.IMPORTANCE_HIGH))
+            gestore.createNotificationChannel(NotificationChannel(CANALE, "${Nome.attuale} in auto", NotificationManager.IMPORTANCE_HIGH))
         }
         val apri = PendingIntent.getActivity(
             ctx, ID_NOTIFICA, Intent(ctx, MainActivity::class.java).putExtra("attiva_auto", true),
@@ -108,7 +108,7 @@ object Auto {
                 ID_NOTIFICA, costruttore
                     .setSmallIcon(R.drawable.ic_notifica)
                     .setContentTitle("Sei in auto")
-                    .setContentText("Tocca per attivare Jarvis: poi basta dire \"Ehi Jarvis\".")
+                    .setContentText("Tocca per attivare ${Nome.attuale}: poi basta dire \"Ehi ${Nome.attuale}\".")
                     .setContentIntent(apri)
                     .setAutoCancel(true)
                     .build()

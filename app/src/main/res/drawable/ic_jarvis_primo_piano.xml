@@ -1,21 +1,30 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Icona di Jarvis: sfera dorata con anelli HUD, in nero, oro e bianco -->
+<!-- Icona: un nucleo dorato con l'anello in orbita, su fondo nero. Senza lettere: va bene con qualsiasi nome. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <path android:strokeColor="#D4A84B" android:strokeWidth="1" android:strokeAlpha="0.75"
-        android:pathData="M85.00,54.00L83.00,54.00M84.53,59.38L82.56,59.04M83.13,64.60L81.25,63.92M80.85,69.50L79.11,68.50M77.75,73.93L76.22,72.64M73.93,77.75L72.64,76.22M69.50,80.85L68.50,79.11M64.60,83.13L63.92,81.25M59.38,84.53L59.04,82.56M54.00,85.00L54.00,83.00M48.62,84.53L48.96,82.56M43.40,83.13L44.08,81.25M38.50,80.85L39.50,79.11M34.07,77.75L35.36,76.22M30.25,73.93L31.78,72.64M27.15,69.50L28.89,68.50M24.87,64.60L26.75,63.92M23.47,59.38L25.44,59.04M23.00,54.00L25.00,54.00M23.47,48.62L25.44,48.96M24.87,43.40L26.75,44.08M27.15,38.50L28.89,39.50M30.25,34.07L31.78,35.36M34.07,30.25L35.36,31.78M38.50,27.15L39.50,28.89M43.40,24.87L44.08,26.75M48.62,23.47L48.96,25.44M54.00,23.00L54.00,25.00M59.38,23.47L59.04,25.44M64.60,24.87L63.92,26.75M69.50,27.15L68.50,28.89M73.93,30.25L72.64,31.78M77.75,34.07L76.22,35.36M80.85,38.50L79.11,39.50M83.13,43.40L81.25,44.08M84.53,48.62L82.56,48.96" />
-    <path android:strokeColor="#D4A84B" android:strokeWidth="1.8" android:strokeAlpha="1"
-        android:pathData="M86.00,54.00L81.50,54.00M54.00,86.00L54.00,81.50M22.00,54.00L26.50,54.00M54.00,22.00L54.00,26.50" />
-    <path android:strokeColor="#D4A84B" android:strokeWidth="1.8" android:strokeLineCap="round"
-        android:pathData="M54.00,30.00A24,24 0,0 1 78.00,54.00" />
-    <path android:strokeColor="#F5F5F5" android:strokeWidth="2.2" android:strokeLineCap="round"
-        android:pathData="M45.79,76.55A24,24 0,0 1 33.22,66.00" />
-    <path android:fillColor="#D4A84B" android:fillAlpha="0.18" android:pathData="M37,54A17,17 0,1 1 71,54A17,17 0,1 1 37,54Z" />
-    <path android:fillColor="#D4A84B" android:fillAlpha="0.45" android:pathData="M41,54A13,13 0,1 1 67,54A13,13 0,1 1 41,54Z" />
-    <path android:fillColor="#E8C46E" android:pathData="M44,54A10,10 0,1 1 64,54A10,10 0,1 1 44,54Z" />
-    <path android:fillColor="#F7E6B5" android:pathData="M47.5,54A6.5,6.5 0,1 1 60.5,54A6.5,6.5 0,1 1 47.5,54Z" />
-    <path android:fillColor="#FFFFFF" android:pathData="M50.5,54A3.5,3.5 0,1 1 57.5,54A3.5,3.5 0,1 1 50.5,54Z" />
+    <!-- alone -->
+    <path android:fillColor="#D4A84B" android:fillAlpha="0.10" android:pathData="M27.00,54.00A27.00,27.00 0,1 1 81.00,54.00A27.00,27.00 0,1 1 27.00,54.00Z" />
+    <path android:fillColor="#D4A84B" android:fillAlpha="0.16" android:pathData="M32.50,54.00A21.50,21.50 0,1 1 75.50,54.00A21.50,21.50 0,1 1 32.50,54.00Z" />
+    <!-- metà dell'orbita che passa dietro -->
+    <path android:strokeColor="#D4A84B" android:strokeAlpha="0.45" android:strokeWidth="1.6" android:strokeLineCap="round"
+        android:pathData="M25.34,64.43L25.19,63.83L25.16,63.18L25.26,62.49L25.48,61.77L25.82,61.01L26.28,60.22L26.86,59.41L27.55,58.57L28.36,57.71L29.28,56.84L30.31,55.96L31.44,55.06L32.66,54.17L33.97,53.27L35.38,52.37L36.86,51.48L38.41,50.61L40.03,49.74L41.71,48.90L43.44,48.08L45.22,47.28L47.04,46.51L48.88,45.77L50.75,45.07L52.63,44.41L54.52,43.79L56.40,43.21L58.28,42.68L60.14,42.19L61.97,41.76L63.76,41.38L65.52,41.05L67.22,40.78L68.87,40.57L70.45,40.41L71.97,40.31L73.41,40.27L74.76,40.29L76.03,40.37L77.20,40.50L78.27,40.70L79.24,40.95L80.10,41.25L80.84,41.61L81.48,42.03L81.99,42.49L82.39,43.01L82.66,43.57" />
+    <!-- il nucleo: sfera con luce in alto a sinistra -->
+    <path android:pathData="M37.50,54.00A16.50,16.50 0,1 1 70.50,54.00A16.50,16.50 0,1 1 37.50,54.00Z">
+        <aapt:attr name="android:fillColor">
+            <gradient android:type="radial" android:centerX="48.5" android:centerY="47.5" android:gradientRadius="23"
+                android:startColor="#FFF6D8" android:centerColor="#E2B65A" android:endColor="#5A3F10" />
+        </aapt:attr>
+    </path>
+    <path android:strokeColor="#F0D58C" android:strokeAlpha="0.8" android:strokeWidth="0.8" android:pathData="M37.50,54.00A16.50,16.50 0,1 1 70.50,54.00A16.50,16.50 0,1 1 37.50,54.00Z" />
+    <!-- riflesso -->
+    <path android:fillColor="#FFFFFF" android:fillAlpha="0.85" android:pathData="M44.60,46.80A3.00,3.00 0,1 1 50.60,46.80A3.00,3.00 0,1 1 44.60,46.80Z" />
+    <!-- metà dell'orbita che passa davanti, con la scintilla -->
+    <path android:strokeColor="#F0D58C" android:strokeWidth="2.0" android:strokeLineCap="round"
+        android:pathData="M82.66,43.57L82.81,44.17L82.84,44.82L82.74,45.51L82.52,46.23L82.18,46.99L81.72,47.78L81.14,48.59L80.45,49.43L79.64,50.29L78.72,51.16L77.69,52.04L76.56,52.94L75.34,53.83L74.03,54.73L72.62,55.63L71.14,56.52L69.59,57.39L67.97,58.26L66.29,59.10L64.56,59.92L62.78,60.72L60.96,61.49L59.12,62.23L57.25,62.93L55.37,63.59L53.48,64.21L51.60,64.79L49.72,65.32L47.86,65.81L46.03,66.24L44.24,66.62L42.48,66.95L40.78,67.22L39.13,67.43L37.55,67.59L36.03,67.69L34.59,67.73L33.24,67.71L31.97,67.63L30.80,67.50L29.73,67.30L28.76,67.05L27.90,66.75L27.16,66.39L26.52,65.97L26.01,65.51L25.61,64.99L25.34,64.43" />
+    <path android:fillColor="#FFFFFF" android:pathData="M69.09,56.37A2.30,2.30 0,1 1 73.69,56.37A2.30,2.30 0,1 1 69.09,56.37Z" />
+    <path android:fillColor="#F0D58C" android:fillAlpha="0.35" android:pathData="M67.19,56.37A4.20,4.20 0,1 1 75.59,56.37A4.20,4.20 0,1 1 67.19,56.37Z" />
 </vector>

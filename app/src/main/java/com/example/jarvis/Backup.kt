@@ -57,8 +57,8 @@ object Backup {
 
     /** Ripristina un backup. Restituisce cosa dire all'utente. */
     fun importa(ctx: Context, testo: String): String {
-        val radice = try { JSONObject(testo) } catch (e: Exception) { return "Il file scelto non è un backup di Jarvis." }
-        if (!radice.has("jarvis_backup")) return "Il file scelto non è un backup di Jarvis."
+        val radice = try { JSONObject(testo) } catch (e: Exception) { return "Il file scelto non è un backup di ${Nome.attuale}." }
+        if (!radice.has("jarvis_backup")) return "Il file scelto non è un backup di ${Nome.attuale}."
         val modifica = prefs(ctx).edit()
         val impostazioni = radice.optJSONObject("impostazioni") ?: JSONObject()
         var quante = 0

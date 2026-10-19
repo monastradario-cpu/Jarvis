@@ -98,6 +98,7 @@ class MainActivity : Activity(), Cervello.Uscita {
     private val SERIF = Typeface.create("serif", Typeface.NORMAL)
 
     private lateinit var infoHud: TextView
+    private lateinit var titoloHud: TextView
     private lateinit var contenitoreSfera: FrameLayout
 
     // Personalizzazione: sfondo con foto, blocchi, pulsanti rapidi, dock, gioco in corso
@@ -289,7 +290,7 @@ class MainActivity : Activity(), Cervello.Uscita {
         if (intento?.getBooleanExtra("attiva_auto", false) == true) {
             intento.removeExtra("attiva_auto")
             if (!ServizioJarvis.attivo) accendiSempreAttivo()
-            reattore.postDelayed({ parla("Buon viaggio. Chiuda pure l'app: quando vuole, dica Ehi Jarvis.") }, 700)
+            reattore.postDelayed({ parla("Buon viaggio. Chiuda pure l'app: quando vuole, dica Ehi ${Nome.attuale}.") }, 700)
             return
         }
         if (intento?.action == Intent.ACTION_ASSIST || intento?.action == Intent.ACTION_VOICE_COMMAND ||
@@ -444,9 +445,11 @@ class MainActivity : Activity(), Cervello.Uscita {
             setPadding(0, dp(8), dp(8), dp(8))
             setOnClickListener { mostraMemoria() }
         }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-        barra.addView(testoHud(cervello.nomeAssistente().uppercase(Locale.ITALIAN), COLORE_ORO, 18f, 0.5f).apply {
+        titoloHud = testoHud(cervello.nomeAssistente().uppercase(Locale.ITALIAN), COLORE_ORO, 18f, 0.5f).apply {
             gravity = Gravity.CENTER
-        }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+            maxLines = 1
+        }
+        barra.addView(titoloHud, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT))
         barra.addView(testoHud("SISTEMA", COLORE_ORO, 11f, 0.2f).apply {
             gravity = Gravity.END or Gravity.CENTER_VERTICAL
             setPadding(dp(8), dp(8), 0, dp(8))
@@ -769,7 +772,7 @@ class MainActivity : Activity(), Cervello.Uscita {
         if (modoSottotitoli()) {
             registro.gravity = Gravity.CENTER_HORIZONTAL
             if (ultimaDomanda.isNotEmpty()) testo.append(formatta("Tu", ultimaDomanda, "\n\n"))
-            if (ultimaRisposta.isNotEmpty()) testo.append(formatta("Jarvis", ultimaRisposta, "\n\n"))
+            if (ultimaRisposta.isNotEmpty()) testo.append(formatta("${Nome.attuale}", ultimaRisposta, "\n\n"))
             for ((chi, nota) in noteRecenti) testo.append(formatta(chi, nota, "\n"))
             registro.text = testo
             scorrimento.post { scorrimento.scrollTo(0, 0) }
@@ -800,10 +803,10 @@ class MainActivity : Activity(), Cervello.Uscita {
         Triple("CARATTERE", "CARATTERE", "Tono, battute e lunghezza delle risposte"),
         Triple("VOCE", "VOCE", "Voce neurale, velocità e tono"),
         Triple("ASPETTO", "ASPETTO", "Colori, forma della sfera e testo"),
-        Triple("PERSONALIZZA", "STILE", "Menù, home a blocchi, pulsanti, sfondo e suoni"),
-        Triple("GIOCHI", "GIOCHI", "Giochi a voce, minigiochi, trofei e Jarvis vivo"),
-        Triple("PLUGIN", "PLUGIN", "Cosa può usare Jarvis"),
-        Triple("ATTIVO", "ATTIVO", "Ehi Jarvis sempre in ascolto"),
+        Triple("PERSONALIZZA", "STILE", "Nome, menù, home a blocchi, pulsanti, sfondo e suoni"),
+        Triple("GIOCHI", "GIOCHI", "Giochi a voce, minigiochi, trofei e ${Nome.attuale} vivo"),
+        Triple("PLUGIN", "PLUGIN", "Cosa può usare ${Nome.attuale}"),
+        Triple("ATTIVO", "ATTIVO", "Ehi ${Nome.attuale} sempre in ascolto"),
         Triple("MATTINO", "MATTINO", "Riepilogo del mattino"),
         Triple("COLLEGA", "COLLEGA", "Casa, email e PC"),
         Triple("DATI", "DATI", "Memoria, archivio e backup"),
@@ -860,7 +863,7 @@ class MainActivity : Activity(), Cervello.Uscita {
         when (id) {
             "CERVELLO" -> if (usaClaude()) "Claude" else "Gemini"
             "VOCE" -> if (prefs.getString("motore_voce", "") == "neurale") "Voce neurale" else "Voce del telefono"
-            "PERSONALIZZA" -> Personalizza.STILI_MENU.firstOrNull { it.first == Personalizza.stileMenu(prefs) }?.second?.substringBefore(":") ?: ""
+            "PERSONALIZZA" -> "Nome: ${Nome.attuale} · " + (Personalizza.STILI_MENU.firstOrNull { it.first == Personalizza.stileMenu(prefs) }?.second?.substringBefore(":") ?: "")
             "GIOCHI" -> Giochi.inCorso(this)?.substringBefore(" ·")?.let { "In corso: $it" } ?: "Livello ${Trofei.livello(Trofei.punti(this)).first}"
             "ATTIVO" -> if (ServizioJarvis.attivo) "Acceso" else "Spento"
             else -> VOCI_MENU.firstOrNull { it.first == id }?.third ?: ""
@@ -966,7 +969,7 @@ class MainActivity : Activity(), Cervello.Uscita {
             textSize = 24f
             gravity = Gravity.CENTER
             setTextColor(tema.sfondo)
-            contentDescription = "Parla con Jarvis"
+            contentDescription = "Parla con ${Nome.attuale}"
             background = GradientDrawable().apply {
                 shape = GradientDrawable.OVAL
                 setColor(tema.accento)
@@ -1226,7 +1229,7 @@ class MainActivity : Activity(), Cervello.Uscita {
     //  PERSONALIZZA: pannello con prova dal vivo
     // ================================================================
 
-    private fun mostraPersonalizza(scheda: String = "menu") {
+    private fun mostraPersonalizza(scheda: String = "nome") {
         chiudiMenuRadiale()
         if (pannello != null) {
             pannello?.mostraScheda(scheda)
@@ -1236,6 +1239,8 @@ class MainActivity : Activity(), Cervello.Uscita {
         val p = PannelloPersonalizza(this, prefs, tema, altezza,
             aggiorna = { aggiornaPersonalizzazione() },
             scegliFoto = { scegliFotoSfondo() },
+            cambiaNome = { nome -> cambiaNome(nome) },
+            provaNome = { provaNome() },
             alChiudere = {
                 pannello?.let { fondo.removeView(it.vista) }
                 pannello = null
@@ -1243,6 +1248,35 @@ class MainActivity : Activity(), Cervello.Uscita {
         pannello = p
         fondo.addView(p.vista, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, altezza, Gravity.BOTTOM))
         p.mostraScheda(scheda)
+    }
+
+    /** Il nuovo nome: titolo, parola di attivazione, widget. Si resta sulla pagina. */
+    private fun cambiaNome(nuovo: String): String {
+        val prima = Nome.attuale
+        val n = Nome.imposta(this, nuovo)
+        titoloHud.text = n.uppercase(Locale.ITALIAN)
+        if (n != prima) {
+            if (ServizioJarvis.attivo) {
+                stopService(Intent(this, ServizioJarvis::class.java))
+                reattore.postDelayed({ ServizioJarvis.avvia(this) }, 600)
+            }
+            try { WidgetJarvis.aggiorna(this) } catch (e: Exception) { }
+            ImprontaVocale.carica(this) { }
+        }
+        return n
+    }
+
+    private fun provaNome() {
+        if (!permessoMicrofono()) {
+            requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), CODICE_MIC)
+            return
+        }
+        ServizioJarvis.invia(this, ServizioJarvis.AZIONE_PAUSA)
+        Toast.makeText(this, "Di' \"Ehi ${Nome.attuale}\" adesso...", Toast.LENGTH_LONG).show()
+        ImprontaVocale.provaNome(this) { esito ->
+            aggiungiAlRegistro("Jarvis", esito)
+            Toast.makeText(this, esito, Toast.LENGTH_LONG).show()
+        }
     }
 
     // ================================================================
@@ -1286,7 +1320,7 @@ class MainActivity : Activity(), Cervello.Uscita {
             "${Trofei.sbloccati(this).size} trofei su ${Trofei.TUTTI.size}")
         pagina.bottone("Apri livelli e trofei") { pagina.chiudi(); mostraTrofei() }
 
-        pagina.titoloSezione("Jarvis vivo")
+        pagina.titoloSezione("${Nome.attuale} vivo")
         val caselle = Umore.OPZIONI.map { (chiave, testo, _) -> chiave to pagina.casella(testo, Umore.opzione(this, chiave)) }
         pagina.nota("Umore")
         val umore = pagina.scelta(listOf("auto" to "Automatico: cambia da solo durante la giornata") + Umore.UMORI,
@@ -1321,7 +1355,7 @@ class MainActivity : Activity(), Cervello.Uscita {
             val preso = t.id in sbloccati
             pagina.riga((if (preso) "◆ " else "◇ ") + t.nome + "  ·  " + t.descrizione, if (preso) COLORE_BIANCO else COLORE_TENUE)
         }
-        pagina.nota("Si guadagnano punti usando Jarvis, giocando e personalizzandolo. Ogni trofeo vale 25 punti.")
+        pagina.nota("Si guadagnano punti usando ${Nome.attuale}, giocando e personalizzandolo. Ogni trofeo vale 25 punti.")
         pagina.mostra()
     }
 
@@ -1563,7 +1597,7 @@ class MainActivity : Activity(), Cervello.Uscita {
     // ---------- CERVELLO ----------
     private fun mostraCervello() {
         val pagina = Pagina("Cervello")
-        pagina.titoloSezione("Chi ragiona per Jarvis")
+        pagina.titoloSezione("Chi ragiona per ${Nome.attuale}")
         val fornitore = pagina.scelta(
             listOf(
                 "gemini" to "Gemini (Google): gratuito, consigliato",
@@ -1620,18 +1654,18 @@ class MainActivity : Activity(), Cervello.Uscita {
         val appellativo = pagina.campo("Signore, signora, il tuo nome, oppure vuoto", prefs.getString("appellativo", "signore") ?: "")
         pagina.titoloSezione("Interazione")
         val dialogo = pagina.casella(
-            "Conversazione continua: quando Jarvis ti fa una domanda, ascolta subito la risposta",
+            "Conversazione continua: quando ${Nome.attuale} ti fa una domanda, ascolta subito la risposta",
             prefs.getBoolean("dialogo_continuo", true)
         )
         val interrompibile = pagina.casella(
-            "Interrompibile: mentre parla, di' \"basta\" o \"stop\" per zittirlo, o \"Jarvis\" per parlargli sopra",
+            "Interrompibile: mentre parla, di' \"basta\" o \"stop\" per zittirlo, o \"${Nome.attuale}\" per parlargli sopra",
             prefs.getBoolean("interrompibile", true)
         )
         val confermaApp = pagina.casella(
             "Prima di aprire un'app, spiegami cosa farai e chiedimi conferma",
             prefs.getBoolean("conferma_app", false)
         )
-        pagina.nota("Per gli acquisti e per cancellare appuntamenti Jarvis chiede sempre due conferme.")
+        pagina.nota("Per gli acquisti e per cancellare appuntamenti ${Nome.attuale} chiede sempre due conferme.")
         pagina.titoloSezione("Velocità")
         val rapidi = pagina.casella(
             "Comandi istantanei: torcia, volume, sveglie, timer, musica, chiamate e ora senza IA (anche offline)",
@@ -1642,10 +1676,10 @@ class MainActivity : Activity(), Cervello.Uscita {
             prefs.getBoolean("streaming", true)
         )
         pagina.titoloSezione("Risparmio richieste")
-        pagina.nota("Di giorno Jarvis impara da solo, senza IA, e fa i comandi semplici (meteo, promemoria, agenda, notizie, messaggi...) " +
+        pagina.nota("Di giorno ${Nome.attuale} impara da solo, senza IA, e fa i comandi semplici (meteo, promemoria, agenda, notizie, messaggi...) " +
             "sul telefono. Riassunti, apprendimento e riassunti dei documenti li fa tutti insieme di notte, con pochissime richieste.")
         val risparmio = pagina.casella("Risparmia richieste: elaborazioni automatiche di notte", prefs.getBoolean("risparmio_richieste", true))
-        pagina.titoloSezione("Jarvis proattivo")
+        pagina.titoloSezione("${Nome.attuale} proattivo")
         pagina.nota("Ti avvisa da solo: appuntamenti in arrivo (e quando partire), messaggi insistenti, pioggia. Mai a voce di notte.")
         val proattivo = pagina.casella("Avvisi proattivi", prefs.getBoolean("proattivo", true))
         val proCalendario = pagina.casella("Appuntamenti e quando partire", prefs.getBoolean("proattivo_calendario", true))
@@ -1689,7 +1723,7 @@ class MainActivity : Activity(), Cervello.Uscita {
             Voce.applica(voce, prefs)
             voce.setPitch(tonoScelto)
             voce.setSpeechRate(velocitaScelta)
-            voce.speak("Buongiorno. Sono Jarvis, a sua disposizione.", TextToSpeech.QUEUE_FLUSH, null, "prova")
+            voce.speak("Buongiorno. Sono ${Nome.attuale}, a sua disposizione.", TextToSpeech.QUEUE_FLUSH, null, "prova")
         }
 
         val nomeVoce = TextView(this).apply { setPadding(0, dp(6), 0, 0) }
@@ -1793,7 +1827,7 @@ class MainActivity : Activity(), Cervello.Uscita {
         val barraTono = cursore("Tono", tonoScelto) { tonoScelto = it }
         val barraVelocita = cursore("Velocità", velocitaScelta) { velocitaScelta = it }
         pagina.bottone("Prova la voce") { prova() }
-        pagina.bottone("Preset Jarvis: maschile, grave, calmo") {
+        pagina.bottone("Preset ${Nome.attuale}: maschile, grave, calmo") {
             val voce = tts
             val maschile = if (voce != null) Voce.vociItaliane(voce).withIndex()
                 .firstOrNull { Voce.etichetta(it.value, it.index + 1).contains("maschile") }?.value else null
@@ -1818,7 +1852,7 @@ class MainActivity : Activity(), Cervello.Uscita {
     // ---------- PLUGIN ----------
     private fun mostraPlugin() {
         val pagina = Pagina("Plugin")
-        pagina.nota("Jarvis sceglie da solo quale plugin usare in base alla richiesta.")
+        pagina.nota("${Nome.attuale} sceglie da solo quale plugin usare in base alla richiesta.")
         val caselle = cervello.PLUGIN.map { plugin -> plugin.id to pagina.casella(plugin.nome, pluginAttivo(plugin.id)) }
         pagina.mostra {
             val modifica = prefs.edit()
@@ -1832,14 +1866,15 @@ class MainActivity : Activity(), Cervello.Uscita {
     // ---------- SEMPRE ATTIVO ----------
     private fun mostraSempreAttivo() {
         val pagina = Pagina("Sempre attivo")
-        pagina.nota("Jarvis resta acceso in background con una notifica fissa: di' \"Ehi Jarvis\" oppure tocca Parla " +
-            "nella notifica o la tessera Jarvis nel menu a tendina.")
-        val parolaAttivazione = pagina.casella("Parola di attivazione \"Jarvis\" (offline)", prefs.getBoolean("parola_attivazione", true))
+        pagina.nota("${Nome.attuale} resta acceso in background con una notifica fissa: di' \"Ehi ${Nome.attuale}\" oppure tocca Parla " +
+            "nella notifica o la tessera ${Nome.PREDEFINITO} nel menu a tendina.")
+        val parolaAttivazione = pagina.casella("Parola di attivazione \"${Nome.attuale}\" (offline)", prefs.getBoolean("parola_attivazione", true))
         pagina.titoloSezione("Nome dell'assistente")
-        pagina.nota("Come vuoi chiamarlo: Jarvis, Venerdì, Max... Una sola parola. Dopo averlo cambiato provalo: se non lo riconosco scegline un altro.")
+        pagina.nota("Come vuoi chiamarlo: ${Nome.attuale}, Venerdì, Max... Una sola parola. Dopo averlo cambiato provalo: se non lo riconosco scegline un altro.")
         val nomeAssistente = pagina.campo("Nome", cervello.nomeAssistente())
         pagina.bottone("Prova il nome (parla per 5 secondi)") {
-            prefs.edit().putString("nome_assistente", nomeAssistente.text.toString().trim().split(" ").first().ifEmpty { "Jarvis" }).apply()
+            Nome.imposta(this, nomeAssistente.text.toString())
+            titoloHud.text = Nome.attuale.uppercase(Locale.ITALIAN)
             if (!permessoMicrofono()) {
                 requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), CODICE_MIC)
                 return@bottone
@@ -1851,10 +1886,10 @@ class MainActivity : Activity(), Cervello.Uscita {
         pagina.titoloSezione("Comando di attivazione")
         val frase = pagina.scelta(
             listOf(
-                "entrambi" to "Ehi Jarvis oppure Ciao Jarvis",
-                "ehi" to "Solo Ehi Jarvis",
-                "ciao" to "Solo Ciao Jarvis",
-                "jarvis" to "Solo Jarvis (si attiva più facilmente)"
+                "entrambi" to "Ehi ${Nome.attuale} oppure Ciao ${Nome.attuale}",
+                "ehi" to "Solo Ehi ${Nome.attuale}",
+                "ciao" to "Solo Ciao ${Nome.attuale}",
+                "jarvis" to "Solo ${Nome.attuale} (si attiva più facilmente)"
             ),
             prefs.getString("frase_attivazione", "entrambi") ?: "entrambi"
         )
@@ -1870,8 +1905,8 @@ class MainActivity : Activity(), Cervello.Uscita {
         )
         pagina.titoloSezione("Riconoscimento della voce")
         pagina.nota(
-            if (ImprontaVocale.registrata(this)) "Voce registrata ✓ Jarvis può rispondere solo a te."
-            else "Registra la tua voce: Jarvis risponderà al comando solo se a parlare sei tu, non la TV o altre persone."
+            if (ImprontaVocale.registrata(this)) "Voce registrata ✓ ${Nome.attuale} può rispondere solo a te."
+            else "Registra la tua voce: ${Nome.attuale} risponderà al comando solo se a parlare sei tu, non la TV o altre persone."
         )
         val soloMiaVoce = pagina.casella("Rispondi solo alla mia voce", prefs.getBoolean("verifica_voce", true))
         val rigore = pagina.scelta(
@@ -1888,7 +1923,7 @@ class MainActivity : Activity(), Cervello.Uscita {
         pagina.titoloSezione("Voci della famiglia")
         val famiglia = ImprontaVocale.famiglia(this)
         pagina.nota(
-            if (famiglia.isEmpty()) "Registra anche le voci dei tuoi familiari: Jarvis risponderà anche a loro, li chiamerà per nome e terrà i loro ricordi separati."
+            if (famiglia.isEmpty()) "Registra anche le voci dei tuoi familiari: ${Nome.attuale} risponderà anche a loro, li chiamerà per nome e terrà i loro ricordi separati."
             else "Voci registrate: " + famiglia.joinToString(", ") { it.nome }
         )
         pagina.bottone("Aggiungi la voce di un familiare") {
@@ -1930,20 +1965,20 @@ class MainActivity : Activity(), Cervello.Uscita {
             ),
             prefs.getString("risparmio", "equilibrato") ?: "equilibrato"
         )
-        pagina.nota("In ogni caso Jarvis analizza l'audio solo quando qualcuno parla: in silenzio consuma pochissimo.")
+        pagina.nota("In ogni caso ${Nome.attuale} analizza l'audio solo quando qualcuno parla: in silenzio consuma pochissimo.")
         pagina.bottone(if (ServizioJarvis.attivo) "Spegni la modalità sempre attiva" else "Accendi la modalità sempre attiva") {
             if (ServizioJarvis.attivo) spegniSempreAttivo() else accendiSempreAttivo()
         }
         pagina.titoloSezione("Assistente del telefono")
-        pagina.nota("Rendi Jarvis l'assistente predefinito: tenendo premuto il tasto di accensione (o con il gesto " +
-            "dall'angolo) si apre Jarvis già in ascolto. Scegli Jarvis in \"App assistente digitale\".")
-        pagina.bottone("Imposta Jarvis come assistente") {
+        pagina.nota("Rendi ${Nome.attuale} l'assistente predefinito: tenendo premuto il tasto di accensione (o con il gesto " +
+            "dall'angolo) si apre ${Nome.attuale} già in ascolto. Scegli ${Nome.PREDEFINITO} in \"App assistente digitale\".")
+        pagina.bottone("Imposta ${Nome.attuale} come assistente") {
             if (!apriImpostazione(Intent(Settings.ACTION_VOICE_INPUT_SETTINGS), silenzioso = true)) {
                 apriImpostazione(Intent(Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS))
             }
         }
         pagina.titoloSezione("Auto e cuffie")
-        pagina.nota("Quando il telefono si collega al Bluetooth dell'auto Jarvis si mette in ascolto e risponde in breve. " +
+        pagina.nota("Quando il telefono si collega al Bluetooth dell'auto ${Nome.attuale} si mette in ascolto e risponde in breve. " +
             "Con le cuffie ascolta anche a schermo spento." +
             (prefs.getString("ultimo_bluetooth", "")?.takeIf { it.isNotBlank() }?.let { "\nUltimo dispositivo collegato: $it" } ?: ""))
         val autoAttiva = pagina.casella("Modalità auto e cuffie automatica", prefs.getBoolean("auto_attiva", true))
@@ -1953,7 +1988,7 @@ class MainActivity : Activity(), Cervello.Uscita {
             if (ultimo.isNotBlank()) nomiAuto.setText(ultimo) else aggiungiAlRegistro("Jarvis", "Collega prima il telefono all'auto.")
         }
         if (Build.VERSION.SDK_INT >= 31 && checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
-            pagina.bottone("Permetti a Jarvis di vedere i dispositivi Bluetooth") {
+            pagina.bottone("Permetti a ${Nome.attuale} di vedere i dispositivi Bluetooth") {
                 requestPermissions(arrayOf(Manifest.permission.BLUETOOTH_CONNECT), 5)
             }
         }
@@ -1977,10 +2012,10 @@ class MainActivity : Activity(), Cervello.Uscita {
                 apriImpostazione(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName")))
             }
         }
-        pagina.nota("Se Android non ti lascia attivare notifiche o accessibilità: Impostazioni > App > Jarvis > menu ⋮ > " +
+        pagina.nota("Se Android non ti lascia attivare notifiche o accessibilità: Impostazioni > App > ${Nome.PREDEFINITO} > menu ⋮ > " +
             "Consenti impostazioni con limitazioni, poi riprova.")
         pagina.mostra {
-            val nuovoNome = nomeAssistente.text.toString().trim().split(" ").first().ifEmpty { "Jarvis" }
+            val nuovoNome = nomeAssistente.text.toString().trim().split(" ").first().ifEmpty { Nome.PREDEFINITO }
             val cambiata = parolaAttivazione.isChecked != prefs.getBoolean("parola_attivazione", true) ||
                 nuovoNome != cervello.nomeAssistente()
             prefs.edit()
@@ -1994,6 +2029,8 @@ class MainActivity : Activity(), Cervello.Uscita {
                 .putBoolean("auto_attiva", autoAttiva.isChecked)
                 .putString("auto_nomi", nomiAuto.text.toString().trim())
                 .apply()
+            Nome.imposta(this, nuovoNome)
+            titoloHud.text = Nome.attuale.uppercase(Locale.ITALIAN)
             if (cambiata && ServizioJarvis.attivo) {
                 stopService(Intent(this, ServizioJarvis::class.java))
                 reattore.postDelayed({ ServizioJarvis.avvia(this) }, 600)
@@ -2051,7 +2088,7 @@ class MainActivity : Activity(), Cervello.Uscita {
     // ---------- MATTINO ----------
     private fun mostraMattino() {
         val pagina = Pagina("Mattino")
-        pagina.nota("Ogni mattina, all'ora scelta, Jarvis ti fa il riepilogo della giornata. " +
+        pagina.nota("Ogni mattina, all'ora scelta, ${Nome.attuale} ti fa il riepilogo della giornata. " +
             "Se è sempre attivo lo legge a voce, altrimenti ti manda una notifica.")
         val attivo = pagina.casella("Riepilogo automatico ogni mattina", prefs.getBoolean("mattino_attivo", false))
         val ora = pagina.campo("Ora (HH:MM)", prefs.getString("mattino_ora", "07:30") ?: "07:30")
@@ -2078,7 +2115,7 @@ class MainActivity : Activity(), Cervello.Uscita {
             gestisciRichiesta("Fammi il riepilogo del mattino.")
         }
         pagina.titoloSezione("Ricerca Google (facoltativa)")
-        pagina.nota("Gratis Jarvis usa ANSA, Google News e Wikipedia. Con il piano a pagamento di Gemini puoi attivare " +
+        pagina.nota("Gratis ${Nome.attuale} usa ANSA, Google News e Wikipedia. Con il piano a pagamento di Gemini puoi attivare " +
             "la ricerca Google vera: include 5.000 ricerche gratuite al mese. Col piano gratuito lascia spento.")
         val ricercaGoogle = pagina.casella("Usa la ricerca Google di Gemini", prefs.getBoolean("ricerca_google", false))
         pagina.mostra {
@@ -2388,7 +2425,7 @@ class MainActivity : Activity(), Cervello.Uscita {
         pagina.titoloSezione("PC Windows")
         pagina.nota("Sul PC avvia jarvis_pc.py (lo trovi nel progetto su GitHub): ti mostra indirizzo, codice e MAC da scrivere qui. " +
             "PC e telefono devono essere sulla stessa rete Wi-Fi. Per accenderlo da spento attiva il Wake-on-LAN nel BIOS. " +
-            "Per mandare un file al PC: Condividi > Jarvis: invia al PC.")
+            "Per mandare un file al PC: Condividi > ${Nome.PREDEFINITO}: invia al PC.")
         val pcIp = pagina.campo("Indirizzo del PC (es. 192.168.1.20)", prefs.getString("pc_ip", "") ?: "")
         val pcToken = pagina.campo("Codice di collegamento", Cassaforte.leggi(prefs, "pc_token"), true)
         val pcMac = pagina.campo("MAC del PC, per accenderlo (facoltativo)", prefs.getString("pc_mac", "") ?: "")
@@ -2441,7 +2478,7 @@ class MainActivity : Activity(), Cervello.Uscita {
             setTextIsSelectable(true)
         })
         pagina.titoloSezione("Aggiornamenti")
-        pagina.nota("Versione installata: ${Aggiornamenti.versioneInstallata(this)}. Jarvis controlla da solo ogni qualche ora se ce n'è una nuova.")
+        pagina.nota("Versione installata: ${Aggiornamenti.versioneInstallata(this)}. ${Nome.attuale} controlla da solo ogni qualche ora se ce n'è una nuova.")
         pagina.bottone("Cerca aggiornamenti adesso") { aggiornaOra() }
         val autoAggiorna = pagina.casella("Avvisami quando c'è una versione nuova", prefs.getBoolean("aggiornamenti_auto", true))
         autoAggiorna.setOnCheckedChangeListener { _, v -> prefs.edit().putBoolean("aggiornamenti_auto", v).apply() }
@@ -2450,7 +2487,7 @@ class MainActivity : Activity(), Cervello.Uscita {
         resoconto.setOnCheckedChangeListener { _, v -> prefs.edit().putBoolean("resoconto", v).apply() }
         pagina.bottone("Fammi il resoconto adesso") { gestisciRichiesta("Fammi il resoconto della settimana.") }
         pagina.titoloSezione("Fase notturna")
-        pagina.nota("Ogni notte (o dalle 23 se il telefono è in carica) Jarvis riassume le conversazioni, impara dalle richieste " +
+        pagina.nota("Ogni notte (o dalle 23 se il telefono è in carica) ${Nome.attuale} riassume le conversazioni, impara dalle richieste " +
             "e completa i riassunti dei documenti, tutto con una o poche richieste.\n" +
             (prefs.getString("notturna_esito", "")?.takeIf { it.isNotBlank() }?.let { "Ultima volta: $it" } ?: "Non è ancora stata eseguita."))
         pagina.bottone("Fallo adesso") {
@@ -2461,7 +2498,7 @@ class MainActivity : Activity(), Cervello.Uscita {
             }.start()
         }
         pagina.titoloSezione("Archivio dei documenti")
-        pagina.nota("${Archivio.numero(this)} documenti. Quando carichi un file con il tasto +, Jarvis lo conserva con un riassunto per le domande future.")
+        pagina.nota("${Archivio.numero(this)} documenti. Quando carichi un file con il tasto +, ${Nome.attuale} lo conserva con un riassunto per le domande future.")
         val archivioAuto = pagina.casella("Conserva automaticamente i file caricati", prefs.getBoolean("archivio_auto", true))
         archivioAuto.setOnCheckedChangeListener { _, v -> prefs.edit().putBoolean("archivio_auto", v).apply() }
         pagina.bottone("Apri l'archivio") { mostraArchivio() }
@@ -2700,7 +2737,7 @@ class MainActivity : Activity(), Cervello.Uscita {
                     "1. Tocca APRI INFO APP qui sotto\n" +
                     "2. In alto a destra tocca i tre puntini ⋮\n" +
                     "3. Scegli \"Consenti impostazioni con limitazioni\" e conferma con impronta o PIN\n" +
-                    "4. Torna qui e tocca VAI ALL'IMPOSTAZIONE, poi attiva Jarvis\n\n" +
+                    "4. Torna qui e tocca VAI ALL'IMPOSTAZIONE, poi attiva ${Nome.PREDEFINITO}\n\n" +
                     "La voce nel menu ⋮ compare solo dopo aver provato almeno una volta ad attivare l'impostazione."
             )
             .setPositiveButton("Vai all'impostazione") { _, _ -> apriImpostazione(impostazione) }
@@ -2726,11 +2763,11 @@ class MainActivity : Activity(), Cervello.Uscita {
         prefs.edit().putBoolean("neurale_guasta", false).apply()
         if (testo.isBlank()) return
         AlertDialog.Builder(this)
-            .setTitle("Jarvis si era chiuso per un errore")
+            .setTitle("${Nome.attuale} si era chiuso per un errore")
             .setMessage("Copia questo testo e mandamelo: mi serve per correggere il problema.\n\n" + testo.take(3000))
             .setPositiveButton("Copia") { _, _ ->
                 (getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager)
-                    .setPrimaryClip(android.content.ClipData.newPlainText("Errore Jarvis", testo))
+                    .setPrimaryClip(android.content.ClipData.newPlainText("Errore ${Nome.attuale}", testo))
                 aggiungiAlRegistro("Jarvis", "Errore copiato: incollalo nella chat con Claude.")
             }
             .setNeutralButton("Condividi") { _, _ ->
@@ -2758,7 +2795,7 @@ class MainActivity : Activity(), Cervello.Uscita {
                 if (file == null) {
                     aggiungiAlRegistro("Jarvis", "Non sono riuscito a scaricare l'aggiornamento. Riprova più tardi.")
                 } else if (!Aggiornamenti.installa(this, file)) {
-                    aggiungiAlRegistro("Jarvis", "Permetti a Jarvis di installare app (si è aperta la pagina), poi torna qui e tocca di nuovo Cerca aggiornamenti.")
+                    aggiungiAlRegistro("Jarvis", "Permetti a ${Nome.PREDEFINITO} di installare app (si è aperta la pagina), poi torna qui e tocca di nuovo Cerca aggiornamenti.")
                 } else {
                     aggiungiAlRegistro("Jarvis", "Conferma l'installazione della versione ${nuova.numero}: ricordi e impostazioni restano.")
                 }
@@ -2862,7 +2899,7 @@ class MainActivity : Activity(), Cervello.Uscita {
         }
 
         AlertDialog.Builder(this)
-            .setTitle("Memoria di Jarvis")
+            .setTitle("Memoria di ${Nome.attuale}")
             .setView(ScrollView(this).apply { addView(contenuto) })
             .setPositiveButton("Chiudi", null)
             .setNeutralButton("Nuova conversazione") { _, _ ->
@@ -2889,7 +2926,7 @@ class MainActivity : Activity(), Cervello.Uscita {
     private fun confermaCancellaTutto() {
         AlertDialog.Builder(this)
             .setTitle("Cancellare tutta la memoria?")
-            .setMessage("Jarvis dimenticherà ricordi, lezioni, routine, riassunto, diario e conversazione. Le note restano.")
+            .setMessage("${Nome.attuale} dimenticherà ricordi, lezioni, routine, riassunto, diario e conversazione. Le note restano.")
             .setPositiveButton("Cancella") { _, _ ->
                 Thread { cervello.cancellaTutto() }.start()
                 aggiungiAlRegistro("Memoria", "Memoria cancellata.")
@@ -3074,8 +3111,8 @@ class MainActivity : Activity(), Cervello.Uscita {
         ServizioJarvis.avvia(this)
         ServizioJarvis.invia(this, ServizioJarvis.AZIONE_PAUSA)
         aggiungiAlRegistro(
-            "Jarvis",
-            "Modalità sempre attiva accesa. Quando chiudi questa schermata, di' \"Ehi Jarvis\" o \"Ciao Jarvis\" per chiamarmi. " +
+            "${Nome.attuale}",
+            "Modalità sempre attiva accesa. Quando chiudi questa schermata, di' \"Ehi ${Nome.attuale}\" o \"Ciao ${Nome.attuale}\" per chiamarmi. " +
                 "Per non farmi chiudere dal telefono, attiva anche \"Batteria senza limiti\" e \"Avvio automatico\" nelle impostazioni."
         )
     }

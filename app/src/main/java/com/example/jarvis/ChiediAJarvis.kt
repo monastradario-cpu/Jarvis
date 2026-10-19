@@ -46,7 +46,7 @@ class ChiediAJarvis : Activity() {
             setBackgroundColor(tema.sfondo)
             setPadding(dp(18), dp(36), dp(18), dp(18))
         }
-        radice.addView(hud("JARVIS · CONDIVISO", 14f))
+        radice.addView(hud("${Nome.attuale.uppercase()} · CONDIVISO", 14f))
         stato = TextView(this).apply {
             setTextColor(tema.tenue)
             textSize = 13f

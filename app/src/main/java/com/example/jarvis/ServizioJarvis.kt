@@ -617,7 +617,7 @@ class ServizioJarvis : Service() {
 
     private fun creaCanale() {
         if (Build.VERSION.SDK_INT >= 26) {
-            val canale = NotificationChannel(CANALE, "Jarvis sempre attivo", NotificationManager.IMPORTANCE_LOW)
+            val canale = NotificationChannel(CANALE, "${Nome.attuale} sempre attivo", NotificationManager.IMPORTANCE_LOW)
             canale.setShowBadge(false)
             getSystemService(NotificationManager::class.java).createNotificationChannel(canale)
         }
@@ -630,7 +630,7 @@ class ServizioJarvis : Service() {
         val ferma = PendingIntent.getService(this, 2, Intent(this, ServizioJarvis::class.java).setAction(AZIONE_FERMA), flag)
         val costruttore = if (Build.VERSION.SDK_INT >= 26) Notification.Builder(this, CANALE) else Notification.Builder(this)
         return costruttore
-            .setContentTitle("Jarvis")
+            .setContentTitle("${Nome.attuale}")
             .setContentText(testo)
             .setSmallIcon(R.drawable.ic_notifica)
             .setContentIntent(apri)

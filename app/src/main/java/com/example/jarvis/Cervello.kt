@@ -158,7 +158,7 @@ class Cervello private constructor(private val ctx: Context) {
     /** Chiede un permesso dalla schermata (se è aperta) e restituisce cosa dire all'utente. */
     private fun chiediPermessoGenerico(permesso: String, motivo: String): String {
         val schermata = uscita
-            ?: return "Mi serve il permesso per $motivo: apri l'app Jarvis e ripeti la richiesta da lì."
+            ?: return "Mi serve il permesso per $motivo: apri l'app ${Nome.PREDEFINITO} e ripeti la richiesta da lì."
         principale.post { schermata.chiediPermesso(permesso) }
         return if (permesso == Manifest.permission.ACCESS_BACKGROUND_LOCATION) {
             "Per i promemoria di posizione mi serve la posizione sempre: scegli \"Consenti sempre\" e ripeti la richiesta."
@@ -186,7 +186,7 @@ class Cervello private constructor(private val ctx: Context) {
     /** L'ultima risposta data, per "ripeti". */
     @Volatile internal var ultimaRisposta = ""
 
-    fun nomeAssistente() = (prefs.getString("nome_assistente", "Jarvis") ?: "Jarvis").trim().ifEmpty { "Jarvis" }
+    fun nomeAssistente() = Nome.leggi(prefs)
 
     internal fun contesto(): Context = ctx
 
@@ -274,7 +274,7 @@ class Cervello private constructor(private val ctx: Context) {
             return Risposta(rapida, emptyList())
         }
         if (chiaveAttiva().isEmpty()) {
-            return Risposta("Manca la chiave API: apri Jarvis e inseriscila in Cervello. Intanto posso fare i comandi base, " +
+            return Risposta("Manca la chiave API: apri ${Nome.attuale} e inseriscila in Cervello. Intanto posso fare i comandi base, " +
                 "come torcia, volume, sveglie, timer, musica e chiamate.", emptyList(), mancaChiave = true)
         }
         // 2. Senza internet il cervello non è raggiungibile
@@ -708,12 +708,12 @@ class Cervello private constructor(private val ctx: Context) {
                 val azioni = m.optJSONArray("tool_calls")?.let { c ->
                     (0 until c.length()).joinToString(" ") { "[azione: ${c.optJSONObject(it)?.optJSONObject("function")?.optString("name")}]" }
                 } ?: ""
-                righe.add("Jarvis: $contenuto $azioni".trim())
+                righe.add("${Nome.attuale}: $contenuto $azioni".trim())
             } else if (ruolo == "assistant" && contenuto == JSONObject.NULL) {
                 val azioni = m.optJSONArray("tool_calls")?.let { c ->
                     (0 until c.length()).joinToString(" ") { "[azione: ${c.optJSONObject(it)?.optJSONObject("function")?.optString("name")}]" }
                 } ?: ""
-                if (azioni.isNotBlank()) righe.add("Jarvis: $azioni")
+                if (azioni.isNotBlank()) righe.add("${Nome.attuale}: $azioni")
             } else if (ruolo == "assistant" && contenuto is JSONArray) {
                 val testo = StringBuilder()
                 for (i in 0 until contenuto.length()) {
@@ -724,7 +724,7 @@ class Cervello private constructor(private val ctx: Context) {
                         "server_tool_use" -> testo.append("[ricerca web] ")
                     }
                 }
-                if (testo.isNotBlank()) righe.add("Jarvis: ${testo.toString().trim()}")
+                if (testo.isNotBlank()) righe.add("${Nome.attuale}: ${testo.toString().trim()}")
             }
         }
         return righe.joinToString("\n").take(6000)
@@ -990,7 +990,7 @@ class Cervello private constructor(private val ctx: Context) {
     // ---------- vista: foto descritte da Claude o Gemini ----------
 
     internal fun guarda(domanda: String): String {
-        val schermata = uscita ?: return "Per mostrarmi qualcosa apri l'app Jarvis e chiedimelo da lì."
+        val schermata = uscita ?: return "Per mostrarmi qualcosa apri l'app ${Nome.PREDEFINITO} e chiedimelo da lì."
         val cartella = File(ctx.cacheDir, "foto").apply { mkdirs() }
         val file = File(cartella, "vista.jpg")
         file.delete()

@@ -95,7 +95,7 @@ class VistaDalVivo : ComponentActivity() {
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(16), dp(36), dp(16), dp(8))
         }
-        alto.addView(testoHud("JARVIS · VISTA", 13f), LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        alto.addView(testoHud("${Nome.attuale.uppercase()} · VISTA", 13f), LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         alto.addView(testoHud("CHIUDI", 12f).apply {
             setPadding(dp(10), dp(8), dp(4), dp(8))
             setOnClickListener { finish() }

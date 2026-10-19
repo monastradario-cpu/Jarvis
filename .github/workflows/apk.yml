@@ -24,6 +24,16 @@ jobs:
           gradle-version: "8.10.2"
       - name: Scarica modelli e librerie
         run: bash .github/prepara.sh
+      - name: Controlla i nomi nel vocabolario vocale
+        run: |
+          V=$(find app/src/main/assets/model-it -name "words.txt" | head -1)
+          F=$(find app/src/main/assets/model-it -type f | sed 's#app/src/main/assets/model-it/##' | tr '\n' ' ')
+          if [ -n "$V" ]; then
+            R=""; for w in guizzo orione atlante vega aurelio nucleo jarvis scintilla estro; do if grep -qw "^$w" "$V"; then R="$R $w:si"; else R="$R $w:no"; fi; done
+            echo "::notice title=vocabolario::$R"
+          else
+            echo "::notice title=vocabolario::nessun words.txt. File: $F"
+          fi
       - name: Costruisci l'APK
         run: |
           set -o pipefail

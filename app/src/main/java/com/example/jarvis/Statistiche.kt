@@ -107,13 +107,13 @@ object Statistiche {
         t.append(")\n")
         val risparmiateOggi = g.optLong("rapida") + g.optLong("offline")
         if (g.optLong("richieste") > 0) t.append("Richieste all'IA evitate oggi: $risparmiateOggi su ${g.optLong("richieste")}\n")
-        if (g.optLong("attivazioni") > 0) t.append("Attivazioni con \"Ehi Jarvis\": ${g.optLong("attivazioni")}\n")
+        if (g.optLong("attivazioni") > 0) t.append("Attivazioni con \"Ehi ${Nome.attuale}\": ${g.optLong("attivazioni")}\n")
         if (g.optLong("ia") > 0) t.append("Tempo medio di risposta dell'IA: ${"%.1f".format(Locale.ITALIAN, g.optLong("ms_ia") / 1000.0 / g.optLong("ia"))} s\n")
         if (g.optLong("rapida") > 0) t.append("Comandi istantanei: ${g.optLong("ms_rapida") / g.optLong("rapida").coerceAtLeast(1)} ms in media\n")
         if (g.optLong("ascolto_s") > 0) {
             t.append("In ascolto: ${durata(g.optLong("ascolto_s"))}, di cui audio analizzato ${durata(g.optLong("analisi_s"))}\n")
         }
-        if (g.optLong("batteria") > 0) t.append("Batteria del telefono scesa di ${g.optLong("batteria")}% mentre Jarvis ascoltava\n")
+        if (g.optLong("batteria") > 0) t.append("Batteria del telefono scesa di ${g.optLong("batteria")}% mentre ${Nome.attuale} ascoltava\n")
 
         t.append("\nULTIMI 7 GIORNI\n")
         val cal = Calendar.getInstance()

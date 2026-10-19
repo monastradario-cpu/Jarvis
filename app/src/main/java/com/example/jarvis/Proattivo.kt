@@ -275,7 +275,7 @@ object Proattivo {
         segnaDetto(ctx, chiave)
         val gestore = ctx.getSystemService(NotificationManager::class.java)
         if (Build.VERSION.SDK_INT >= 26) {
-            gestore.createNotificationChannel(NotificationChannel(CANALE, "Avvisi di Jarvis", NotificationManager.IMPORTANCE_DEFAULT))
+            gestore.createNotificationChannel(NotificationChannel(CANALE, "Avvisi di ${Nome.attuale}", NotificationManager.IMPORTANCE_DEFAULT))
         }
         val apri = PendingIntent.getActivity(
             ctx, chiave.hashCode(), Intent(ctx, MainActivity::class.java),
@@ -286,7 +286,7 @@ object Proattivo {
             gestore.notify(
                 chiave.hashCode(), costruttore
                     .setSmallIcon(R.drawable.ic_notifica)
-                    .setContentTitle("Jarvis")
+                    .setContentTitle("${Nome.attuale}")
                     .setContentText(testo)
                     .setStyle(Notification.BigTextStyle().bigText(testo))
                     .setContentIntent(apri)

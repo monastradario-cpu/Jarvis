@@ -76,7 +76,7 @@ object Aggiornamenti {
         p.edit().putInt("aggiornamenti_avvisato", nuova.numero).apply()
         val gestore = ctx.getSystemService(NotificationManager::class.java)
         if (Build.VERSION.SDK_INT >= 26) {
-            gestore.createNotificationChannel(NotificationChannel(CANALE, "Aggiornamenti di Jarvis", NotificationManager.IMPORTANCE_DEFAULT))
+            gestore.createNotificationChannel(NotificationChannel(CANALE, "Aggiornamenti di ${Nome.attuale}", NotificationManager.IMPORTANCE_DEFAULT))
         }
         val apri = PendingIntent.getActivity(
             ctx, ID_NOTIFICA, Intent(ctx, MainActivity::class.java).putExtra("aggiorna", true),
@@ -87,7 +87,7 @@ object Aggiornamenti {
             gestore.notify(
                 ID_NOTIFICA, costruttore
                     .setSmallIcon(R.drawable.ic_notifica)
-                    .setContentTitle("È pronta la versione ${nuova.numero} di Jarvis")
+                    .setContentTitle("È pronta la versione ${nuova.numero} di ${Nome.attuale}")
                     .setContentText("Tocca per aggiornare: ricordi e impostazioni restano.")
                     .setContentIntent(apri)
                     .setAutoCancel(true)

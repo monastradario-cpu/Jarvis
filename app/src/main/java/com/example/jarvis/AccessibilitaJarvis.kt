@@ -20,8 +20,8 @@ class AccessibilitaJarvis : AccessibilityService() {
 
     companion object {
         @Volatile var istanza: AccessibilitaJarvis? = null
-        const val AVVISO =
-            "Il controllo delle app non è attivo. Attiva Jarvis in Impostazioni, Accessibilità, dalle impostazioni di Jarvis."
+        val AVVISO: String get() =
+            "Il controllo delle app non è attivo. Attiva ${Nome.PREDEFINITO} in Impostazioni, Accessibilità, dalle impostazioni dell'app."
     }
 
     override fun onServiceConnected() {

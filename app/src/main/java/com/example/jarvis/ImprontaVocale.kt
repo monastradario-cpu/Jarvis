@@ -31,8 +31,8 @@ object ImprontaVocale {
 
     /** La parola con cui si chiama l'assistente (di serie "jarvis"), in minuscolo e senza spazi. */
     fun parola(ctx: Context): String =
-        (prefs(ctx).getString("nome_assistente", "Jarvis") ?: "Jarvis").trim().lowercase(java.util.Locale.ITALIAN)
-            .replace(Regex("[^\\p{L}]"), "").ifEmpty { "jarvis" }
+        Nome.leggi(prefs(ctx)).lowercase(java.util.Locale.ITALIAN)
+            .replace(Regex("[^\\p{L}]"), "").ifEmpty { Nome.PREDEFINITO.lowercase() }
 
     /** Frasi di attivazione: le altre parole diventano [unk] e non attivano niente. */
     fun grammatica(ctx: Context): String {
