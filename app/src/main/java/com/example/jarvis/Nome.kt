@@ -11,7 +11,7 @@ import java.util.Locale
  */
 object Nome {
 
-    const val PREDEFINITO = "Guizzo"
+    const val PREDEFINITO = "Atlas"
 
     /** Il nome attuale, sempre pronto per i testi (si aggiorna quando lo cambi). */
     @Volatile var attuale: String = PREDEFINITO

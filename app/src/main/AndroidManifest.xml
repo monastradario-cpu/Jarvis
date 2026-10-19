@@ -67,7 +67,7 @@
         android:allowBackup="true"
         android:icon="@drawable/ic_jarvis"
         android:roundIcon="@drawable/ic_jarvis"
-        android:label="Guizzo"
+        android:label="Atlas"
         android:usesCleartextTraffic="true"
         android:theme="@style/TemaJarvis">
 
@@ -174,7 +174,7 @@
         <service
             android:name=".AssistenteJarvis"
             android:exported="true"
-            android:label="Guizzo"
+            android:label="Atlas"
             android:permission="android.permission.BIND_VOICE_INTERACTION">
             <meta-data
                 android:name="android.voice_interaction"
@@ -190,7 +190,7 @@
         <service
             android:name=".RiconoscimentoJarvis"
             android:exported="true"
-            android:label="Guizzo">
+            android:label="Atlas">
             <intent-filter>
                 <action android:name="android.speech.RecognitionService" />
                 <category android:name="android.intent.category.DEFAULT" />
@@ -204,7 +204,7 @@
         <receiver
             android:name=".WidgetJarvis"
             android:exported="false"
-            android:label="Guizzo">
+            android:label="Atlas">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
             </intent-filter>
@@ -233,7 +233,7 @@
         <service
             android:name=".NotificheJarvis"
             android:exported="true"
-            android:label="Guizzo"
+            android:label="Atlas"
             android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
             <intent-filter>
                 <action android:name="android.service.notification.NotificationListenerService" />
@@ -244,7 +244,7 @@
         <service
             android:name=".AccessibilitaJarvis"
             android:exported="true"
-            android:label="Guizzo"
+            android:label="Atlas"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
             <intent-filter>
                 <action android:name="android.accessibilityservice.AccessibilityService" />
@@ -280,7 +280,7 @@
             android:name=".TesseraJarvis"
             android:exported="true"
             android:icon="@drawable/ic_notifica"
-            android:label="Guizzo"
+            android:label="Atlas"
             android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
             <intent-filter>
                 <action android:name="android.service.quicksettings.action.QS_TILE" />

@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="descrizione_accessibilita">Permette al tuo assistente Guizzo di leggere lo schermo e usare le altre app quando glielo chiedi a voce: toccare pulsanti, scrivere nei campi, scorrere e mandare messaggi WhatsApp. Agisce solo su tua richiesta.</string>
+    <string name="descrizione_accessibilita">Permette al tuo assistente Atlas di leggere lo schermo e usare le altre app quando glielo chiedi a voce: toccare pulsanti, scrivere nei campi, scorrere e mandare messaggi WhatsApp. Agisce solo su tua richiesta.</string>
     <string name="descrizione_widget">Il tuo assistente sulla schermata home: tocca la sfera per parlare e vedi il prossimo impegno.</string>
-    <string name="invia_al_pc">Guizzo: invia al PC</string>
-    <string name="chiedi_a_jarvis">Guizzo: chiedi</string>
+    <string name="invia_al_pc">Atlas: invia al PC</string>
+    <string name="chiedi_a_jarvis">Atlas: chiedi</string>
 </resources>

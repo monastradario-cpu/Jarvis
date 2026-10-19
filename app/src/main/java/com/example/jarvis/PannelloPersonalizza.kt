@@ -200,7 +200,8 @@ class PannelloPersonalizza(
             provaNome()
         }
         titolo("Idee")
-        nota("Guizzo, Orione, Atlante, Vega, Aurelio, Nucleo… oppure il nome che preferisci. " +
+        nota("Di serie si chiama ${Nome.PREDEFINITO}: Assistente Tuttofare, Leale, Attento, Sempre presente. " +
+            "Altre idee: Orion, Elias, Victor… oppure il nome che preferisci. " +
             "Sotto l'icona del telefono resta «${Nome.PREDEFINITO}»: Android non permette di cambiarlo dall'app.")
     }
 
