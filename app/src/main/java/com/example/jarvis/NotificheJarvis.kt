@@ -31,8 +31,8 @@ class NotificheJarvis : NotificationListenerService() {
         @Volatile var istanza: NotificheJarvis? = null
         private val recenti = ArrayList<Messaggio>()
         private const val MASSIMO = 60
-        private const val AVVISO =
-            "Non ho accesso alle notifiche. Attivalo dalle impostazioni di ${Nome.attuale}, nella sezione Sempre attivo."
+        private val AVVISO: String get() =
+            "Non ho accesso alle notifiche. Attivalo dalle mie impostazioni, nella sezione Sempre attivo."
 
         fun abilitato(ctx: Context): Boolean {
             val elenco = Settings.Secure.getString(ctx.contentResolver, "enabled_notification_listeners") ?: return false
