@@ -18,14 +18,15 @@ object Personalizza {
     // ================================================================
 
     val STILI_MENU = listOf(
-        "radiale" to "Radiale: tieni premuta la sfera e il menù si apre a ventaglio",
         "dock" to "Dock in basso: Casa, Chat, Parla, Giochi e Opzioni sempre a portata",
-        "tessere" to "Griglia a tessere: tutte le voci in riquadri grandi",
-        "gesti" to "Gesti sulla sfera: scorri su, giù, a sinistra o a destra"
+        "radiale" to "Solo radiale: tieni premuta la sfera e il menù si apre a ventaglio"
     )
 
-    fun stileMenu(p: SharedPreferences) = (p.getString("stile_menu", "radiale") ?: "radiale")
-        .let { s -> if (STILI_MENU.any { it.first == s }) s else "radiale" }
+    fun stileMenu(p: SharedPreferences) = (p.getString("stile_menu", "dock") ?: "dock")
+        .let { s -> if (STILI_MENU.any { it.first == s }) s else "dock" }
+
+    /** Gesti sulla sfera (scorri su, giù, a sinistra, a destra): si possono usare con qualsiasi stile. */
+    fun gesti(p: SharedPreferences) = p.getBoolean("gesti_sfera", false)
 
     /** Cosa fa ogni gesto sulla sfera (stile "gesti"). */
     val AZIONI_GESTO = listOf(
@@ -167,7 +168,7 @@ object Personalizza {
 
     /** Le chiavi toccate dalla personalizzazione (per annullare una prova). */
     val CHIAVI = listOf(
-        "stile_menu", "gesto_su", "gesto_giu", "gesto_sinistra", "gesto_destra",
+        "stile_menu", "gesti_sfera", "interfaccia", "testo_dimensione", "testo_carattere", "conversazione", "mostra_dati", "animazioni", "gesto_su", "gesto_giu", "gesto_sinistra", "gesto_destra",
         "blocchi", "blocchi_sopra", "sfera_dimensione",
         "pulsanti", "pulsanti_miei",
         "sfondo", "sfondo_oscura", "sfondo_sfoca", "sfondo_giornaliero",

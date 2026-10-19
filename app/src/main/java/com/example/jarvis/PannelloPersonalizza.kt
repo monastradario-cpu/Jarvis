@@ -40,7 +40,7 @@ class PannelloPersonalizza(
     confermatoIniziale: Map<String, Any?>? = null
 ) {
 
-    val SCHEDE = listOf("nome" to "NOME", "3d" to "3D E COLORI", "menu" to "MENÙ", "home" to "HOME", "pulsanti" to "PULSANTI", "sfondo" to "SFONDO", "suoni" to "SUONI")
+    val SCHEDE = listOf("nome" to "NOME", "aspetto" to "ASPETTO", "menu" to "MENÙ", "home" to "HOME", "pulsanti" to "PULSANTI", "sfondo" to "SFONDO", "suoni" to "SUONI")
 
     private fun dp(v: Int) = (v * a.resources.displayMetrics.density).toInt()
 
@@ -182,7 +182,7 @@ class PannelloPersonalizza(
         campoNome = null
         when (scheda) {
             "nome" -> schedaNome()
-            "3d" -> scheda3D()
+            "aspetto", "3d" -> scheda3D()
             "menu" -> schedaMenu()
             "home" -> schedaHome()
             "pulsanti" -> schedaPulsanti()
@@ -304,6 +304,29 @@ class PannelloPersonalizza(
             prefs.edit().putInt("r_tonalita", if (v == 0) -1 else v).apply()
             anteprimaColore()
         }
+        titolo("Schermata")
+        scelta(Tema.INTERFACCE, prefs.getString("interfaccia", "hud") ?: "hud") { v ->
+            prefs.edit().putString("interfaccia", v).apply(); cambiato()
+        }
+        casella("Riga di dati in alto (ora, batteria, plugin)", prefs.getBoolean("mostra_dati", true)) { si ->
+            prefs.edit().putBoolean("mostra_dati", si).apply(); cambiato()
+        }
+        casella("Animazioni ridotte (consumano meno batteria)", prefs.getString("animazioni", "piene") == "ridotte") { si ->
+            prefs.edit().putString("animazioni", if (si) "ridotte" else "piene").apply(); cambiato()
+        }
+        titolo("Conversazione e testo")
+        scelta(listOf("sottotitoli" to "Sottotitoli: solo l'ultima domanda e risposta", "cronologia" to "Cronologia: tutta la conversazione"),
+            prefs.getString("conversazione", "sottotitoli") ?: "sottotitoli") { v ->
+            prefs.edit().putString("conversazione", v).apply(); cambiato()
+        }
+        scelta(listOf("piccolo" to "Testo piccolo", "normale" to "Testo normale", "grande" to "Testo grande", "enorme" to "Testo molto grande"),
+            prefs.getString("testo_dimensione", "normale") ?: "normale") { v ->
+            prefs.edit().putString("testo_dimensione", v).apply(); cambiato()
+        }
+        scelta(listOf("serif" to "Carattere elegante", "sans" to "Carattere moderno", "mono" to "Carattere tecnico"),
+            prefs.getString("testo_carattere", "serif") ?: "serif") { v ->
+            prefs.edit().putString("testo_carattere", v).apply(); cambiato()
+        }
     }
 
     private fun schedaMenu() {
@@ -311,9 +334,13 @@ class PannelloPersonalizza(
         scelta(Personalizza.STILI_MENU, Personalizza.stileMenu(prefs)) { v ->
             prefs.edit().putString("stile_menu", v).apply()
             cambiato()
-            mostraScheda("menu")
         }
-        if (Personalizza.stileMenu(prefs) == "gesti") {
+        casella("Gesti sulla sfera: scorri su, giù, a sinistra o a destra per aprire le pagine", Personalizza.gesti(prefs)) { si ->
+            prefs.edit().putBoolean("gesti_sfera", si).apply()
+            cambiato()
+            scorri.post { mostraScheda("menu") }
+        }
+        if (Personalizza.gesti(prefs)) {
             titolo("Cosa fa ogni gesto")
             nota("Scorri con decisione sulla sfera. Tocca una riga per cambiare l'azione.")
             for ((dir, nomeDir) in Personalizza.DIREZIONI) {

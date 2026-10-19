@@ -40,29 +40,18 @@ object Tema {
     /** Stili dell'interfaccia. */
     val INTERFACCE = listOf(
         "hud" to "HUD: anelli tecnici, riga di dati in alto",
-        "minimal" to "Minimal: solo la sfera, niente dati",
-        "completa" to "HUD completo: più anelli e particelle sempre visibili",
-        "radar" to "Radar: griglia e raggio che scansiona",
-        "olografico" to "Olografico: linee di scansione e luce tremolante"
+        "minimal" to "Minimal: solo la sfera, niente anelli"
     )
 
     /** Forme del cuore animato. */
     val FORME = listOf(
+        "3d_olografica" to "3D · Sfera olografica: gusci di filamenti luminosi",
         "3d_nucleo" to "3D · Nucleo: sfera di energia con anello in orbita",
         "3d_sole" to "3D · Sole: stella di plasma con la corona",
-        "3d_pianeta" to "3D · Pianeta: continenti, nuvole e anelli",
-        "3d_cristallo" to "3D · Cristallo: gemma sfaccettata che ruota",
+        "3d_pianeta" to "3D · Pianeta: continenti, nuvole e atmosfera",
         "3d_ologramma" to "3D · Ologramma: globo a reticolo",
-        "3d_liquido" to "3D · Oro liquido: gocce di metallo che si fondono",
-        "3d_atomo" to "3D · Atomo: elettroni in orbita",
         "3d_buconero" to "3D · Buco nero: disco di luce attorno al buio",
-        "sfera" to "Sfera luminosa",
-        "anelli" to "Nucleo ad anelli",
-        "onda" to "Onda vocale: barre che danzano con la voce",
-        "atomo" to "Atomo: elettroni in orbita",
-        "cristallo" to "Cristallo: stella che ruota",
-        "galassia" to "Galassia: spirale di particelle",
-        "esagono" to "Esagono: nucleo tecnologico"
+        "sfera" to "Sfera classica (senza 3D)"
     )
 
     /** Sfondi dietro al cuore. */

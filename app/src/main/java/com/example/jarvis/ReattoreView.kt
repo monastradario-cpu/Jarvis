@@ -251,7 +251,10 @@ class ReattoreView(context: Context) : View(context) {
         }
     })
 
+    private var ultimoTocco = 0L
+
     override fun onTouchEvent(event: MotionEvent): Boolean {
+        ultimoTocco = System.currentTimeMillis()
         zoom.onTouchEvent(event)
         if (!zoom.isInProgress) gesti.onTouchEvent(event)
         invalidate()
@@ -520,7 +523,14 @@ class ReattoreView(context: Context) : View(context) {
 
         // Prossimo fotogramma: 30 al secondo (15 con animazioni ridotte) per consumare poco.
         // Si ferma da solo quando l'app non è visibile.
-        postInvalidateDelayed(if (ridotto) 66L else 33L)
+        // fluido: al ritmo dello schermo (fino a 120 Hz) quando succede qualcosa, 60 al secondo a riposo
+        val vivo = stato != Stato.RIPOSO || festa > 0f || agitazione > 0f || abs(velocitaGiro) > 1f ||
+            System.currentTimeMillis() - ultimoTocco < 2500
+        when {
+            ridotto -> postInvalidateDelayed(50L)
+            vivo -> postInvalidateOnAnimation()
+            else -> postInvalidateDelayed(16L)
+        }
     }
 
     private fun disegnaSfondo(canvas: Canvas, cx: Float, cy: Float, r: Float, anello: Int, t: Float) {

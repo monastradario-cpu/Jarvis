@@ -321,13 +321,21 @@ class ServizioJarvis : Service() {
      * - equilibrato: ascolta sempre, ma si ferma sotto il 20% di batteria (se non è in carica)
      * - prestazioni: ascolta sempre
      */
-    private fun deveAscoltare(): Boolean = inAuto() || cuffie() || when (cervello.prefs.getString("risparmio", "equilibrato")) {
+    /** Di notte (00–7), se non è in carica, l'ascolto si ferma da solo (opzione in ATTIVO). */
+    private fun notte(): Boolean {
+        if (!cervello.prefs.getBoolean("pausa_notte", true) || inCarica) return false
+        val ora = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
+        return ora < 7
+    }
+
+    private fun deveAscoltare(): Boolean = inAuto() || cuffie() || !notte() && when (cervello.prefs.getString("risparmio", "equilibrato")) {
         "massimo" -> schermoAcceso || inCarica
         "prestazioni" -> true
         else -> inCarica || livelloBatteria > 20
     }
 
-    private fun motivoPausa() = if (!schermoAcceso) "In pausa a schermo spento: tocca Parla"
+    private fun motivoPausa() = if (notte()) "In pausa di notte (fino alle 7): tocca Parla"
+    else if (!schermoAcceso) "In pausa a schermo spento: tocca Parla"
     else "In pausa per batteria scarica: tocca Parla"
 
     private var ultimaRipresa = 0L     // per ignorare l'eco subito dopo che Jarvis ha parlato

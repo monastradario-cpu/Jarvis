@@ -17,13 +17,11 @@ class Grafica3D(modello: String) {
     companion object {
         /** id, nome, descrizione */
         val MODELLI = listOf(
+            Triple("olografica", "Sfera olografica", "Gusci di filamenti luminosi come circuiti, che ruotano attorno al nucleo"),
             Triple("nucleo", "Nucleo", "Sfera di energia con anello in orbita"),
             Triple("sole", "Sole", "Stella di plasma con la corona che pulsa con la voce"),
-            Triple("pianeta", "Pianeta", "Pianeta con continenti, nuvole, atmosfera e anelli"),
-            Triple("cristallo", "Cristallo", "Gemma sfaccettata che ruota, con spigoli di luce"),
+            Triple("pianeta", "Pianeta", "Pianeta con continenti, nuvole e atmosfera"),
             Triple("ologramma", "Ologramma", "Globo a reticolo trasparente con scansione"),
-            Triple("liquido", "Oro liquido", "Gocce di metallo liquido che si fondono"),
-            Triple("atomo", "Atomo", "Nucleo con tre elettroni in orbita, davanti e dietro"),
             Triple("buconero", "Buco nero", "Disco di luce che gira attorno al buio")
         )
 
@@ -32,14 +30,14 @@ class Grafica3D(modello: String) {
         /** Da una forma di Tema.FORME al modello 3D (null se non è 3D). */
         fun modelloDaForma(forma: String): String? = when {
             forma == "nucleo3d" -> "nucleo"
-            forma.startsWith("3d_") -> forma.removePrefix("3d_").takeIf { m -> MODELLI.any { it.first == m } }
+            forma.startsWith("3d_") -> forma.removePrefix("3d_").let { m -> if (MODELLI.any { it.first == m }) m else "olografica" }
             else -> null
         }
 
         /** Disponibile su questo telefono? (Android 13+ e programma grafico compilato senza errori) */
         val disponibile: Boolean by lazy {
             Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && try {
-                RuntimeShader(sorgente("nucleo")); true
+                RuntimeShader(sorgente("olografica")); true
             } catch (e: Throwable) {
                 false
             }
@@ -48,12 +46,10 @@ class Grafica3D(modello: String) {
         fun sorgente(modello: String): String = TESTA + when (modello) {
             "sole" -> SOLE
             "pianeta" -> PIANETA
-            "cristallo" -> CRISTALLO
             "ologramma" -> OLOGRAMMA
-            "liquido" -> LIQUIDO
-            "atomo" -> ATOMO
             "buconero" -> BUCO_NERO
-            else -> NUCLEO
+            "nucleo" -> NUCLEO
+            else -> OLOGRAFICA
         }
 
         private const val TESTA = """
@@ -130,6 +126,70 @@ half4 finale(float4 c) {
     float g = dot(c.rgb, float3(0.3, 0.59, 0.11));
     c.rgb = mix(c.rgb, float3(g) * 0.7, spento);
     return half4(c);
+}
+"""
+
+        private const val OLOGRAFICA = """
+float linee(float3 n, float celle, float spessore, float semi) {
+    float lat = asin(clamp(n.y, -1.0, 1.0));
+    float lon = atan(n.z, n.x);
+    float2 p = float2(lon / 6.2831853 * celle * 2.0, lat / 3.1415926 * celle);
+    float2 c = floor(p);
+    float2 f = fract(p);
+    float r = caso(float3(c, semi));
+    float dd = r < 0.5
+        ? min(abs(length(f) - 0.5), abs(length(f - float2(1.0, 1.0)) - 0.5))
+        : min(abs(length(f - float2(1.0, 0.0)) - 0.5), abs(length(f - float2(0.0, 1.0)) - 0.5));
+    float linea = 1.0 - smoothstep(spessore * 0.5, spessore, dd);
+    float pieno = step(0.3, caso(float3(c * 1.7, semi + 3.0)));
+    return linea * pieno;
+}
+
+float3 guscio(float2 uv, float R, float celle, float semi, float giro, float incl, float banda, float3 col) {
+    float d = length(uv);
+    if (d >= R) return float3(0.0);
+    float z = sqrt(R * R - d * d);
+    float3 tot = float3(0.0);
+    for (int k = 0; k < 2; k++) {
+        float zz = k == 0 ? z : -z;
+        float3 n = float3(uv.x, -uv.y, zz) / R;
+        float3 q = giraY(giraX(n, incl), giro);
+        float l = linee(q, celle, 0.17, semi);
+        float frammenti = smoothstep(0.35, 0.6, rumore(q * 3.0 + float3(semi, tempo * 0.15, 0.0)));
+        float fasce = banda > 0.0 ? smoothstep(banda, banda + 0.15, abs(q.y)) : 1.0;
+        float bordo = 0.6 + 0.4 * pow(1.0 - abs(zz) / R, 2.0);
+        float peso = k == 0 ? 1.0 : 0.35;
+        tot += col * (l * frammenti * fasce * bordo * peso);
+    }
+    return tot;
+}
+
+half4 main(float2 punto) {
+    float2 uv = (punto - centro) / raggio;
+    float d = length(uv);
+    float3 a = acc();
+    float3 c2 = chi();
+    float f = forza();
+    float3 tinta = mix(a, c2, 0.55);
+    float3 luce = float3(0.0);
+    luce += guscio(uv, 1.25, 22.0, 1.0, tempo * 0.12, 0.25, 0.55, tinta) * 0.9;
+    luce += guscio(uv, 1.0, 18.0, 2.0, -tempo * 0.2, 0.5, 0.0, tinta);
+    luce += guscio(uv, 0.72, 16.0, 3.0, tempo * 0.32, -0.3, 0.0, tinta) * 0.9;
+    luce += guscio(uv, 0.45, 14.0, 4.0, -tempo * 0.5, 0.8, 0.0, c2) * (0.8 + 0.5 * f);
+    float2 r2 = gira2(uv, -0.08);
+    float2 e = float2(r2.x, r2.y / 0.12);
+    float an = (1.0 - smoothstep(0.0, 0.05, abs(length(e) - 1.12))) * (0.6 + 0.4 * f);
+    luce += c2 * an;
+    float2 dir = normalize(float2(0.45, 0.85));
+    float t2 = clamp(dot(uv, dir), -0.75, 0.75);
+    float scia = (1.0 - smoothstep(0.0, 0.018, length(uv - dir * t2))) * (0.5 + 0.5 * sin(tempo * 1.5));
+    luce += c2 * scia * (0.6 + 0.6 * f);
+    luce += c2 * exp(-d * 7.0) * (0.25 + 0.9 * voce + 0.3 * energia);
+    luce *= 0.85 + 0.3 * f;
+    float4 alo = bagliore(d / 1.25, a, 0.12 + 0.18 * f);
+    float al = clamp(max(luce.r, max(luce.g, luce.b)), 0.0, 1.0);
+    float4 colore = sopra(float4(min(luce, float3(al)), al), alo);
+    return finale(colore);
 }
 """
 
@@ -210,15 +270,6 @@ half4 main(float2 punto) {
     float3 c2 = chi();
     float f = forza();
     float4 colore = bagliore(d, a * 0.8 + c2 * 0.2, 0.22 + 0.25 * f) * step(1.0, d);
-    float2 r2 = gira2(uv, 0.42);
-    float2 e = float2(r2.x, r2.y / 0.26);
-    float le = length(e);
-    float banda = smoothstep(1.3, 1.36, le) * (1.0 - smoothstep(1.85, 1.95, le));
-    float righe = 0.55 + 0.45 * sin(le * 38.0) * sin(le * 11.0 + 1.3);
-    float an = clamp(banda * righe * (0.55 + 0.25 * f), 0.0, 1.0);
-    float4 ca = float4(mix(a, c2, righe) * an, an);
-    bool davanti = r2.y > 0.0;
-    if (!davanti) colore = sopra(ca, colore);
     if (d < 1.0) {
         float z = sqrt(1.0 - d * d);
         float3 n = float3(uv.x, -uv.y, z);
@@ -239,59 +290,10 @@ half4 main(float2 punto) {
         float al = 1.0 - smoothstep(0.985, 1.0, d);
         colore = sopra(float4(col * al, al), colore);
     }
-    if (davanti) colore = sopra(ca, colore);
     return finale(colore);
 }
 """
 
-        private const val CRISTALLO = """
-float scena(float3 p) {
-    float3 q = giraY(giraX(p, tempo * 0.45), tempo * 0.7);
-    q = abs(q);
-    return (q.x + q.y + q.z - (1.05 + 0.12 * voce)) * 0.57735027;
-}
-
-float3 normale(float3 p) {
-    float e = 0.002;
-    return normalize(float3(
-        scena(p + float3(e, 0.0, 0.0)) - scena(p - float3(e, 0.0, 0.0)),
-        scena(p + float3(0.0, e, 0.0)) - scena(p - float3(0.0, e, 0.0)),
-        scena(p + float3(0.0, 0.0, e)) - scena(p - float3(0.0, 0.0, e))));
-}
-
-half4 main(float2 punto) {
-    float2 uv = (punto - centro) / raggio;
-    float d = length(uv);
-    float3 a = acc();
-    float3 c2 = chi();
-    float f = forza();
-    float4 colore = bagliore(d * 0.95, a, 0.22 + 0.3 * f);
-    float3 ro = float3(uv.x * 1.2, -uv.y * 1.2, 3.0);
-    float3 rd = float3(0.0, 0.0, -1.0);
-    float t = 0.0;
-    bool colpito = false;
-    for (int i = 0; i < 48; i++) {
-        float h = scena(ro + rd * t);
-        if (h < 0.001) { colpito = true; break; }
-        t += h;
-        if (t > 6.0) break;
-    }
-    if (colpito) {
-        float3 p = ro + rd * t;
-        float3 n = normale(p);
-        float3 q = abs(giraY(giraX(p, tempo * 0.45), tempo * 0.7));
-        float spigolo = 1.0 - smoothstep(0.0, 0.05, min(q.x, min(q.y, q.z)));
-        float3 luce = normalize(float3(-0.5, 0.6, 0.7));
-        float diffusa = max(dot(n, luce), 0.0);
-        float riflesso = pow(max(dot(reflect(-luce, n), -rd), 0.0), 40.0);
-        float bordo = pow(1.0 - max(dot(n, -rd), 0.0), 3.0);
-        float3 dentro = mix(a * 0.25, c2, strati(reflect(rd, n) * 2.0 + float3(tempo * 0.3)));
-        float3 col = dentro * (0.35 + 0.7 * diffusa) + c2 * riflesso + a * bordo * 1.1 + c2 * spigolo * (0.6 + 0.6 * f);
-        colore = sopra(float4(col, 1.0), colore);
-    }
-    return finale(colore);
-}
-"""
 
         private const val OLOGRAMMA = """
 float griglia(float3 n, float spessore) {
@@ -332,125 +334,7 @@ half4 main(float2 punto) {
 }
 """
 
-        private const val LIQUIDO = """
-float smin(float a, float b, float k) {
-    float h = clamp(0.5 + 0.5 * (b - a) / k, 0.0, 1.0);
-    return mix(b, a, h) - k * h * (1.0 - h);
-}
 
-float scena(float3 p) {
-    float t = tempo;
-    float r = 0.48 + 0.08 * voce + 0.04 * energia;
-    float3 p1 = float3(sin(t * 0.9) * 0.42, cos(t * 1.1) * 0.32, sin(t * 0.7) * 0.3);
-    float3 p2 = float3(cos(t * 0.8) * 0.4, sin(t * 1.3) * 0.38, cos(t * 0.9) * 0.3);
-    float3 p3 = float3(sin(t * 1.2 + 2.0) * 0.36, sin(t * 0.6 + 1.0) * 0.4, cos(t * 1.1) * 0.3);
-    float d0 = length(p) - 0.55;
-    float d1 = length(p - p1) - r;
-    float d2 = length(p - p2) - r * 0.9;
-    float d3 = length(p - p3) - r * 0.8;
-    return smin(smin(smin(d0, d1, 0.35), d2, 0.35), d3, 0.35);
-}
-
-float3 normale(float3 p) {
-    float e = 0.002;
-    return normalize(float3(
-        scena(p + float3(e, 0.0, 0.0)) - scena(p - float3(e, 0.0, 0.0)),
-        scena(p + float3(0.0, e, 0.0)) - scena(p - float3(0.0, e, 0.0)),
-        scena(p + float3(0.0, 0.0, e)) - scena(p - float3(0.0, 0.0, e))));
-}
-
-half4 main(float2 punto) {
-    float2 uv = (punto - centro) / raggio;
-    float d = length(uv);
-    float3 a = acc();
-    float3 c2 = chi();
-    float f = forza();
-    float4 colore = bagliore(d * 0.9, a, 0.2 + 0.3 * f);
-    float3 ro = float3(uv.x * 1.15, -uv.y * 1.15, 3.0);
-    float3 rd = float3(0.0, 0.0, -1.0);
-    float t = 0.0;
-    bool colpito = false;
-    for (int i = 0; i < 48; i++) {
-        float h = scena(ro + rd * t);
-        if (h < 0.001) { colpito = true; break; }
-        t += h;
-        if (t > 6.0) break;
-    }
-    if (colpito) {
-        float3 p = ro + rd * t;
-        float3 n = normale(p);
-        float3 r = reflect(rd, n);
-        float cielo = smoothstep(-0.3, 0.9, r.y);
-        float3 amb = mix(a * 0.15, c2 * 1.1, cielo) + a * strati(r * 2.5 + float3(tempo * 0.2)) * 0.4;
-        float bordo = pow(1.0 - max(dot(n, -rd), 0.0), 4.0);
-        float riflesso = pow(max(dot(r, normalize(float3(-0.4, 0.6, 0.7))), 0.0), 50.0);
-        float3 col = amb * (0.6 + 0.4 * bordo) + c2 * riflesso * 1.2 + a * bordo * 0.5;
-        colore = sopra(float4(col, 1.0), colore);
-    }
-    return finale(colore);
-}
-"""
-
-        private const val ATOMO = """
-float4 orbita(float2 uv, float k, float3 a, float3 c2, float f) {
-    float incl = 1.15 + k * 0.35;
-    float rot = k * 2.094 + tempo * 0.25;
-    float3 U = giraY(giraX(float3(1.0, 0.0, 0.0), incl), rot);
-    float3 V = giraY(giraX(float3(0.0, 1.0, 0.0), incl), rot);
-    float R = 1.55;
-    float2 u2 = float2(U.x, -U.y) * R;
-    float2 v2 = float2(V.x, -V.y) * R;
-    float det = u2.x * v2.y - u2.y * v2.x;
-    if (abs(det) < 0.05) det = det < 0.0 ? -0.05 : 0.05;
-    float al = (uv.x * v2.y - uv.y * v2.x) / det;
-    float be = (u2.x * uv.y - u2.y * uv.x) / det;
-    float th = atan(be, al);
-    float2 pt = u2 * cos(th) + v2 * sin(th);
-    float dist = length(uv - pt);
-    float z = (U.z * cos(th) + V.z * sin(th)) * R;
-    float te = tempo * (1.4 + k * 0.3) + k * 2.0;
-    float scia = exp(-mod(te - th, 6.2831853) * 1.6);
-    float linea = (1.0 - smoothstep(0.0, 0.03, dist)) * (0.25 + 0.75 * scia) * (0.6 + 0.4 * f);
-    float2 pe = u2 * cos(te) + v2 * sin(te);
-    float ze = (U.z * cos(te) + V.z * sin(te)) * R;
-    float de = length(uv - pe);
-    float elettrone = exp(-de * 30.0) * 1.3 + exp(-de * 9.0) * 0.3 * f;
-    float davantiLinea = step(0.0, z);
-    float davantiElettrone = step(0.0, ze);
-    // x: linea davanti, y: linea dietro, z: elettrone davanti, w: elettrone dietro
-    return float4(linea * davantiLinea, linea * (1.0 - davantiLinea), elettrone * davantiElettrone, elettrone * (1.0 - davantiElettrone));
-}
-
-half4 main(float2 punto) {
-    float2 uv = (punto - centro) / raggio;
-    float d = length(uv);
-    float3 a = acc();
-    float3 c2 = chi();
-    float f = forza();
-    float rn = 0.45 + 0.05 * voce;
-    float4 colore = bagliore(d / rn, a, 0.3 + 0.4 * f) * step(rn, d);
-    float4 o0 = orbita(uv, 0.0, a, c2, f);
-    float4 o1 = orbita(uv, 1.0, a, c2, f);
-    float4 o2 = orbita(uv, 2.0, a, c2, f);
-    float dietro = clamp((o0.y + o1.y + o2.y) * 0.5 + o0.w + o1.w + o2.w, 0.0, 1.0);
-    float avanti = clamp(o0.x + o1.x + o2.x + o0.z + o1.z + o2.z, 0.0, 1.0);
-    colore = sopra(float4(mix(a, c2, 0.6) * dietro, dietro), colore);
-    float dn = d / rn;
-    if (dn < 1.0) {
-        float z = sqrt(1.0 - dn * dn);
-        float3 n = float3(uv.x / rn, -uv.y / rn, z);
-        float3 q = giraY(n, tempo * 0.6);
-        float plasma = strati(q * 3.0 + float3(tempo * 0.4));
-        float3 luce = normalize(float3(-0.4, 0.5, 0.8));
-        float diffusa = max(dot(n, luce), 0.0);
-        float3 col = mix(a * 0.3, c2, plasma * z) * (0.45 + 0.7 * diffusa) + a * pow(1.0 - z, 2.0) + c2 * pow(z, 8.0) * 0.4 * f;
-        float al = 1.0 - smoothstep(0.97, 1.0, dn);
-        colore = sopra(float4(col * al, al), colore);
-    }
-    colore = sopra(float4(c2 * avanti, avanti), colore);
-    return finale(colore);
-}
-"""
 
         private const val BUCO_NERO = """
 half4 main(float2 punto) {

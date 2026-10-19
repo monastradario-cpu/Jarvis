@@ -27,7 +27,6 @@ object Suoni {
     val INTERRUTTORI = listOf(
         Triple("suoni_fine", "Suono a fine risposta", "Un tocco leggero quando ha finito") to true,
         Triple("suoni_conferma", "Vibra quando esegue", "Sveglie, messaggi, luci, comandi") to true,
-        Triple("suoni_pensa", "Ticchettio mentre pensa", "Mentre aspetta il cervello") to false,
         Triple("suoni_trofeo", "Fanfara per i trofei", "Quando sblocchi un traguardo") to true,
         Triple("suoni_notte", "Silenzioso di notte", "Dalle 23 alle 7 solo vibrazione") to true
     )

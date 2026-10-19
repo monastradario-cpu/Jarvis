@@ -205,6 +205,18 @@ class MainActivity : Activity(), Cervello.Uscita {
             e.apply()
         }
         if (prefs.getString("forma", "") == "nucleo3d") prefs.edit().putString("forma", "3d_nucleo").apply()
+        if (!prefs.getBoolean("versione_definitiva", false)) {
+            // versione definitiva: sfera olografica, menù semplificati, home pulita
+            val e = prefs.edit().putBoolean("versione_definitiva", true)
+            if (Build.VERSION.SDK_INT >= 33 && Grafica3D.disponibile) e.putString("forma", "3d_olografica")
+            when (prefs.getString("stile_menu", "dock")) {
+                "gesti" -> e.putString("stile_menu", "dock").putBoolean("gesti_sfera", true)
+                "tessere" -> e.putString("stile_menu", "dock")
+            }
+            if (prefs.getString("interfaccia", "hud") !in listOf("hud", "minimal")) e.putString("interfaccia", "hud")
+            e.remove("suoni_pensa")
+            e.apply()
+        }
         window.statusBarColor = tema.sfondo
         window.navigationBarColor = tema.sfondo
         costruisciInterfaccia()
@@ -258,9 +270,11 @@ class MainActivity : Activity(), Cervello.Uscita {
                     "editor" -> mostraEditor()
                 }
             }
+        } else if (!prefs.getBoolean("configurato", false)) {
+            aggiungiAlRegistro("Jarvis", "Benvenuto! Ti guido in cinque passi.")
+            reattore.postDelayed({ mostraConfigurazione() }, 500)
         } else if (chiaveAttiva().isEmpty()) {
             aggiungiAlRegistro("Jarvis", "Benvenuto! Crea una chiave gratuita su aistudio.google.com/apikey e incollala in Cervello.")
-            mostraCervello()
         } else if (cervello.haConversazione()) {
             aggiungiAlRegistro("Jarvis", "Bentornato. Ricordo la nostra ultima conversazione. Tocchi la sfera per parlare, la tenga premuta per il menu.")
         } else {
@@ -421,6 +435,9 @@ class MainActivity : Activity(), Cervello.Uscita {
 
     @Suppress("DEPRECATION")
     private fun costruisciInterfaccia() {
+        firmaCostruita = firmaSchermata()
+        blocchiMostrati = ""
+        valoriBlocchi.clear()
         radice = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(18), dp(16), dp(18), dp(14))
@@ -755,6 +772,7 @@ class MainActivity : Activity(), Cervello.Uscita {
      * in modalità cronologia tutta la conversazione che scorre.
      */
     private fun aggiungiAlRegistro(chi: String, testo: String) {
+        alNuovoMessaggio?.invoke()
         cronologiaSessione.add(chi to testo)
         while (cronologiaSessione.size > 200) cronologiaSessione.removeAt(0)
         when (chi) {
@@ -810,8 +828,7 @@ class MainActivity : Activity(), Cervello.Uscita {
         Triple("CERVELLO", "CERVELLO", "Gemini o Claude, chiave e modello"),
         Triple("CARATTERE", "CARATTERE", "Tono, battute e lunghezza delle risposte"),
         Triple("VOCE", "VOCE", "Voce neurale, velocità e tono"),
-        Triple("ASPETTO", "ASPETTO", "Colori, forma della sfera e testo"),
-        Triple("PERSONALIZZA", "STILE", "Nome, menù, home a blocchi, pulsanti, sfondo e suoni"),
+        Triple("ASPETTO", "ASPETTO", "Nome, 3D e colori, menù, home, pulsanti, sfondo e suoni"),
         Triple("GIOCHI", "GIOCHI", "Giochi a voce, minigiochi, trofei e ${Nome.attuale} vivo"),
         Triple("PLUGIN", "PLUGIN", "Cosa può usare ${Nome.attuale}"),
         Triple("ATTIVO", "ATTIVO", "Ehi ${Nome.attuale} sempre in ascolto"),
@@ -854,8 +871,7 @@ class MainActivity : Activity(), Cervello.Uscita {
             "CERVELLO" -> mostraCervello()
             "CARATTERE" -> mostraPersonalita()
             "VOCE" -> mostraVoce()
-            "ASPETTO" -> mostraAspetto()
-            "PERSONALIZZA" -> mostraPersonalizza()
+            "ASPETTO" -> mostraPersonalizza("aspetto")
             "GIOCHI" -> mostraGiochi()
             "PLUGIN" -> mostraPlugin()
             "ATTIVO" -> mostraSempreAttivo()
@@ -871,7 +887,7 @@ class MainActivity : Activity(), Cervello.Uscita {
         when (id) {
             "CERVELLO" -> if (usaClaude()) "Claude" else "Gemini"
             "VOCE" -> if (prefs.getString("motore_voce", "") == "neurale") "Voce neurale" else "Voce del telefono"
-            "PERSONALIZZA" -> "Nome: ${Nome.attuale} · " + (Personalizza.STILI_MENU.firstOrNull { it.first == Personalizza.stileMenu(prefs) }?.second?.substringBefore(":") ?: "")
+            "ASPETTO" -> "Nome: ${Nome.attuale} · " + (Grafica3D.MODELLI.firstOrNull { "3d_" + it.first == prefs.getString("forma", "") }?.second ?: "classico")
             "GIOCHI" -> Giochi.inCorso(this)?.substringBefore(" ·")?.let { "In corso: $it" } ?: "Livello ${Trofei.livello(Trofei.punti(this)).first}"
             "ATTIVO" -> if (ServizioJarvis.attivo) "Acceso" else "Spento"
             else -> VOCI_MENU.firstOrNull { it.first == id }?.third ?: ""
@@ -887,7 +903,7 @@ class MainActivity : Activity(), Cervello.Uscita {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(12), dp(6), dp(12), dp(6))
         }
-        var finestra: AlertDialog? = null
+        var finestra: Foglio? = null
         for (coppia in VOCI_MENU.chunked(2)) {
             val riga = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
             for ((id, _, _) in coppia) {
@@ -927,11 +943,7 @@ class MainActivity : Activity(), Cervello.Uscita {
             if (coppia.size == 1) riga.addView(View(this), LinearLayout.LayoutParams(0, dp(92), 1f))
             griglia.addView(riga)
         }
-        finestra = AlertDialog.Builder(this)
-            .setTitle(cervello.nomeAssistente())
-            .setView(ScrollView(this).apply { addView(griglia) })
-            .setPositiveButton("Chiudi", null)
-            .show()
+        finestra = Foglio(cervello.nomeAssistente(), griglia, false).also { it.mostra() }
     }
 
     // ================================================================
@@ -971,7 +983,7 @@ class MainActivity : Activity(), Cervello.Uscita {
         }
         val pieno = { LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f) }
         d.addView(voce("⌂", "Casa") { tornaCasa() }, pieno())
-        d.addView(voce("☰", "Chat") { mostraCronologia() }, pieno())
+        d.addView(voce("☰", "Chat") { mostraChat() }, pieno())
         d.addView(TextView(this).apply {
             text = "◉"
             textSize = 24f
@@ -1000,7 +1012,7 @@ class MainActivity : Activity(), Cervello.Uscita {
     /** Azioni dei gesti sulla sfera (e di qualche blocco). */
     private fun eseguiAzione(azione: String) {
         when (azione) {
-            "chat" -> mostraCronologia()
+            "chat" -> mostraChat()
             "opzioni" -> mostraTessere()
             "giochi" -> mostraGiochi()
             "agenda" -> gestisciRichiesta("cosa ho oggi")
@@ -1016,7 +1028,7 @@ class MainActivity : Activity(), Cervello.Uscita {
         if (!::dock.isInitialized) return
         val stile = Personalizza.stileMenu(prefs)
         dock.visibility = if (stile == "dock") View.VISIBLE else View.GONE
-        reattore.alGesto = if (stile == "gesti") { direzione -> eseguiAzione(Personalizza.azioneGesto(prefs, direzione)) } else null
+        reattore.alGesto = if (Personalizza.gesti(prefs)) { direzione -> eseguiAzione(Personalizza.azioneGesto(prefs, direzione)) } else null
         (contenitoreSfera.layoutParams as? LinearLayout.LayoutParams)?.let {
             it.weight = Personalizza.pesoSfera(prefs)
             contenitoreSfera.layoutParams = it
@@ -1034,9 +1046,27 @@ class MainActivity : Activity(), Cervello.Uscita {
         rigaGioco.visibility = if (r != null) View.VISIBLE else View.GONE
     }
 
+    private val valoriBlocchi = HashMap<String, TextView>()
+    private var blocchiMostrati = ""
+
     private fun riempiBlocchi() {
         val elenco = Personalizza.blocchi(prefs)
         val sopra = prefs.getBoolean("blocchi_sopra", true)
+        val firma = elenco.joinToString(",") + sopra
+        if (firma == blocchiMostrati && valoriBlocchi.size == elenco.size) {
+            // stessi blocchi: cambia solo il testo, con una dissolvenza leggera
+            for (id in elenco) {
+                val v = valoriBlocchi[id] ?: continue
+                val nuovo = testoBlocco(id)
+                if (v.text.toString() != nuovo) {
+                    v.animate().alpha(0f).setDuration(120).withEndAction { v.text = nuovo; v.animate().alpha(1f).setDuration(160).start() }.start()
+                }
+            }
+            aggiornaDatiBlocchi(elenco)
+            return
+        }
+        blocchiMostrati = firma
+        valoriBlocchi.clear()
         blocchiSopra.removeAllViews()
         blocchiSotto.removeAllViews()
         scorriSopra.visibility = if (sopra && elenco.isNotEmpty()) View.VISIBLE else View.GONE
@@ -1047,6 +1077,10 @@ class MainActivity : Activity(), Cervello.Uscita {
                 marginEnd = dp(8)
             })
         }
+        aggiornaDatiBlocchi(elenco)
+    }
+
+    private fun aggiornaDatiBlocchi(elenco: List<String>) {
         val adesso = System.currentTimeMillis()
         if ("meteo" in elenco && adesso - meteoQuando > 30 * 60_000L) {
             meteoQuando = adesso
@@ -1066,8 +1100,9 @@ class MainActivity : Activity(), Cervello.Uscita {
         }
     }
 
-    private fun vistaBlocco(id: String): View {
-        val (valore, azione) = try {
+    private fun testoBlocco(id: String): String = try { datiBlocco(id).first } catch (e: Exception) { "—" }
+
+    private fun datiBlocco(id: String): Pair<String, () -> Unit> = try {
             when (id) {
                 "meteo" -> meteoBreve.ifEmpty { "Carico il meteo…" } to { gestisciRichiesta("che tempo fa") }
                 "batteria" -> {
@@ -1091,6 +1126,9 @@ class MainActivity : Activity(), Cervello.Uscita {
         } catch (e: Exception) {
             "—" to {}
         }
+
+    private fun vistaBlocco(id: String): View {
+        val (valore, azione) = datiBlocco(id)
         return LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(12), dp(10), dp(12), dp(10))
@@ -1105,6 +1143,7 @@ class MainActivity : Activity(), Cervello.Uscita {
             addView(testoHud(Personalizza.nomeBlocco(id).uppercase(Locale.ITALIAN), COLORE_TENUE, 9f, 0.12f))
             addView(TextView(this@MainActivity).apply {
                 text = valore
+                valoriBlocchi[id] = this
                 textSize = 13f
                 maxLines = 3
                 ellipsize = android.text.TextUtils.TruncateAt.END
@@ -1260,10 +1299,16 @@ class MainActivity : Activity(), Cervello.Uscita {
         p.mostraScheda(scheda)
     }
 
+    /** Le scelte che cambiano la struttura della schermata (si ricostruisce se cambiano). */
+    private fun firmaSchermata() = listOf("interfaccia", "testo_dimensione", "testo_carattere", "conversazione", "mostra_dati", "animazioni")
+        .joinToString("|") { prefs.all[it]?.toString() ?: "" }
+
+    private var firmaCostruita = ""
+
     /** Applica le scelte di PERSONALIZZA; se è cambiato il colore, ricolora tutta l'app subito. */
     private fun aggiornaTuttoDalVivo() {
         val nuovo = Tema.attuale(prefs)
-        if (nuovo.accento != tema.accento || nuovo.sfondo != tema.sfondo || nuovo.testo != tema.testo) {
+        if (nuovo.accento != tema.accento || nuovo.sfondo != tema.sfondo || nuovo.testo != tema.testo || firmaSchermata() != firmaCostruita) {
             ricostruisciConTema()
         } else {
             applicaRegolazioni(reattore)
@@ -1449,6 +1494,7 @@ class MainActivity : Activity(), Cervello.Uscita {
     override fun onBackPressed() {
         when {
             barraAnteprima != null -> barraAnteprima?.performClick()
+            fogli.isNotEmpty() -> fogli.last().chiudi()
             menuRadiale != null -> chiudiMenuRadiale()
             pannello != null -> pannello?.chiudi()
             editor != null -> chiudiEditor(false)
@@ -1517,7 +1563,7 @@ class MainActivity : Activity(), Cervello.Uscita {
             })
         }
 
-        var dialogo: AlertDialog? = null
+        var dialogo: Foglio? = null
         private var applicaProva: (() -> Unit)? = null
         private var ripristinaProva: (() -> Unit)? = null
         private var inProva = false
@@ -1609,39 +1655,135 @@ class MainActivity : Activity(), Cervello.Uscita {
             selettori[scelta]?.invoke(valore)
         }
 
-        /** Mostra la pagina. Salva non chiude: si resta sulla pagina e si può continuare a cambiare. */
+        /** Mostra la pagina come foglio che sale dal basso. Salva non chiude: si resta sulla pagina. */
         fun mostra(alSalvare: (() -> Unit)? = null) {
-            val finestra = AlertDialog.Builder(this@MainActivity)
-                .setTitle(titolo)
-                .setView(ScrollView(this@MainActivity).apply { addView(contenitore) })
-            if (alSalvare != null) {
-                finestra.setPositiveButton("Salva", null)
-                finestra.setNegativeButton("Chiudi", null)
-            } else {
-                finestra.setPositiveButton("Chiudi", null)
-            }
-            finestra.setNeutralButton("Menu") { _, _ -> mostraImpostazioni() }
-            val d = finestra.create()
-            dialogo = d
-            d.setOnDismissListener {
+            val f = Foglio(titolo, contenitore, alSalvare != null)
+            dialogo = f
+            f.alChiudere = {
                 if (barraAnteprima != null) { barraAnteprima?.let { fondo.removeView(it) }; barraAnteprima = null }
                 if (inProva) { inProva = false; ripristinaProva?.invoke() }
             }
-            d.show()
-            if (alSalvare != null) {
-                d.getButton(AlertDialog.BUTTON_POSITIVE)?.setOnClickListener {
-                    try {
-                        alSalvare()
-                        inProva = false
-                        if (!isFinishing && d.isShowing) {
-                            d.setTitle("$titolo  ·  salvato ✓")
-                            Toast.makeText(this@MainActivity, "Salvato. Resti su questa pagina.", Toast.LENGTH_SHORT).show()
-                        }
-                    } catch (e: Exception) {
-                        Toast.makeText(this@MainActivity, "Non sono riuscito a salvare: ${e.message}", Toast.LENGTH_LONG).show()
-                    }
+            f.alSalvare = {
+                try {
+                    alSalvare?.invoke()
+                    inProva = false
+                    f.titolo("$titolo  ·  salvato ✓")
+                    Toast.makeText(this@MainActivity, "Salvato. Resti su questa pagina.", Toast.LENGTH_SHORT).show()
+                } catch (e: Exception) {
+                    Toast.makeText(this@MainActivity, "Non sono riuscito a salvare: ${e.message}", Toast.LENGTH_LONG).show()
                 }
             }
+            f.mostra()
+        }
+    }
+
+    // ================================================================
+    //  FOGLI: le pagine salgono dal basso, si chiudono trascinandole giù
+    // ================================================================
+
+    private val fogli = ArrayList<Foglio>()
+
+    inner class Foglio(titoloIniziale: String, contenuto: View, conSalva: Boolean) {
+        var alChiudere: (() -> Unit)? = null
+        var alSalvare: (() -> Unit)? = null
+        private val velo = View(this@MainActivity).apply {
+            setBackgroundColor(Tema.conAlfa(android.graphics.Color.BLACK, 150))
+            isClickable = true
+            setOnClickListener { chiudi() }
+            alpha = 0f
+        }
+        private val testo = testoHud(titoloIniziale.uppercase(Locale.ITALIAN), COLORE_ORO, 13f, 0.18f)
+        val vista = LinearLayout(this@MainActivity).apply {
+            orientation = LinearLayout.VERTICAL
+            isClickable = true
+            setPadding(dp(18), dp(8), dp(18), dp(12))
+            background = GradientDrawable().apply {
+                val r = dp(24).toFloat()
+                cornerRadii = floatArrayOf(r, r, r, r, 0f, 0f, 0f, 0f)
+                setColor(tema.superficie)
+                setStroke(dp(1), Tema.conAlfa(tema.accento, 140))
+            }
+        }
+        private var chiuso = false
+
+        init {
+            // maniglia + titolo: trascinando giù si chiude
+            val testa = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.VERTICAL }
+            testa.addView(View(this@MainActivity).apply {
+                background = GradientDrawable().apply { cornerRadius = dp(3).toFloat(); setColor(Tema.conAlfa(tema.accento, 120)) }
+            }, LinearLayout.LayoutParams(dp(42), dp(5)).apply { gravity = Gravity.CENTER_HORIZONTAL; bottomMargin = dp(8) })
+            val riga = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+            riga.addView(testo, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            riga.addView(testoHud("✕", COLORE_ORO, 18f, 0f).apply {
+                setPadding(dp(14), dp(6), dp(4), dp(6))
+                contentDescription = "Chiudi"
+                setOnClickListener { chiudi() }
+            })
+            testa.addView(riga)
+            var inizioY = 0f
+            testa.setOnTouchListener { _, e ->
+                when (e.actionMasked) {
+                    android.view.MotionEvent.ACTION_DOWN -> { inizioY = e.rawY; true }
+                    android.view.MotionEvent.ACTION_MOVE -> { vista.translationY = (e.rawY - inizioY).coerceAtLeast(0f); true }
+                    android.view.MotionEvent.ACTION_UP, android.view.MotionEvent.ACTION_CANCEL -> {
+                        if (vista.translationY > dp(110)) chiudi()
+                        else vista.animate().translationY(0f).setDuration(180).start()
+                        true
+                    }
+                    else -> false
+                }
+            }
+            vista.addView(testa)
+            (contenuto.parent as? android.view.ViewGroup)?.removeView(contenuto)
+            vista.addView(ScrollView(this@MainActivity).apply {
+                addView(contenuto)
+                isVerticalFadingEdgeEnabled = true
+                setFadingEdgeLength(dp(16))
+            }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
+            val piede = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.HORIZONTAL; setPadding(0, dp(10), 0, 0) }
+            fun tasto(t: String, pieno: Boolean, azione: () -> Unit) = piede.addView(testoHud(t, if (pieno) tema.sfondo else COLORE_BIANCO, 12f, 0.15f).apply {
+                gravity = Gravity.CENTER
+                background = GradientDrawable().apply {
+                    cornerRadius = dp(23).toFloat()
+                    if (pieno) setColor(tema.accento) else setStroke(dp(1), Tema.conAlfa(tema.accento, 150))
+                }
+                setOnClickListener { azione() }
+            }, LinearLayout.LayoutParams(0, dp(46), 1f).apply { marginEnd = dp(6) })
+            tasto("MENÙ", false) { chiudi(); mostraImpostazioni() }
+            tasto("CHIUDI", false) { chiudi() }
+            if (conSalva) tasto("SALVA", true) { alSalvare?.invoke() }
+            vista.addView(piede)
+        }
+
+        fun titolo(t: String) { testo.text = t.uppercase(Locale.ITALIAN) }
+
+        val isShowing get() = !chiuso && vista.visibility == View.VISIBLE
+
+        fun mostra() {
+            fondo.addView(velo, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+            val altezza = (fondo.height * 0.86f).toInt().coerceAtLeast(dp(360))
+            fondo.addView(vista, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, altezza, Gravity.BOTTOM))
+            fogli.add(this)
+            vista.translationY = altezza.toFloat()
+            vista.animate().translationY(0f).setDuration(260).setInterpolator(android.view.animation.DecelerateInterpolator(1.8f)).start()
+            velo.animate().alpha(1f).setDuration(220).start()
+        }
+
+        fun hide() { vista.visibility = View.GONE; velo.visibility = View.GONE }
+
+        fun show() { vista.visibility = View.VISIBLE; velo.visibility = View.VISIBLE }
+
+        fun dismiss() = chiudi()
+
+        fun chiudi() {
+            if (chiuso) return
+            chiuso = true
+            fogli.remove(this)
+            vista.animate().translationY(vista.height.toFloat().coerceAtLeast(dp(300).toFloat())).setDuration(200).withEndAction {
+                fondo.removeView(vista)
+            }.start()
+            velo.animate().alpha(0f).setDuration(200).withEndAction { fondo.removeView(velo) }.start()
+            alChiudere?.invoke()
         }
     }
 
@@ -1667,6 +1809,7 @@ class MainActivity : Activity(), Cervello.Uscita {
             "Modello Claude",
             prefs.getString("modello_claude", Cervello.MODELLO_CLAUDE_PREDEFINITO) ?: Cervello.MODELLO_CLAUDE_PREDEFINITO
         )
+        pagina.bottone("Rifai la configurazione guidata") { pagina.chiudi(); mostraConfigurazione() }
         pagina.titoloSezione("Meteo")
         val citta = pagina.campo("Città predefinita", prefs.getString("citta", Cervello.CITTA_PREDEFINITA) ?: Cervello.CITTA_PREDEFINITA)
         pagina.mostra {
@@ -1920,6 +2063,8 @@ class MainActivity : Activity(), Cervello.Uscita {
         pagina.nota("${Nome.attuale} resta acceso in background con una notifica fissa: di' \"Ehi ${Nome.attuale}\" oppure tocca Parla " +
             "nella notifica o la tessera ${Nome.PREDEFINITO} nel menu a tendina.")
         val parolaAttivazione = pagina.casella("Parola di attivazione \"${Nome.attuale}\" (offline)", prefs.getBoolean("parola_attivazione", true))
+        val pausaNotte = pagina.casella("Pausa di notte, dalle 0 alle 7, se il telefono non è in carica (risparmia batteria)",
+            prefs.getBoolean("pausa_notte", true))
         pagina.titoloSezione("Nome dell'assistente")
         pagina.nota("Come vuoi chiamarlo: ${Nome.attuale}, Venerdì, Max... Una sola parola. Dopo averlo cambiato provalo: se non lo riconosco scegline un altro.")
         val nomeAssistente = pagina.campo("Nome", cervello.nomeAssistente())
@@ -2072,6 +2217,7 @@ class MainActivity : Activity(), Cervello.Uscita {
             prefs.edit()
                 .putString("nome_assistente", nuovoNome)
                 .putBoolean("parola_attivazione", parolaAttivazione.isChecked)
+                .putBoolean("pausa_notte", pausaNotte.isChecked)
                 .putString("sensibilita", sensibilita())
                 .putString("frase_attivazione", frase())
                 .putBoolean("verifica_voce", soloMiaVoce.isChecked)
@@ -2195,7 +2341,10 @@ class MainActivity : Activity(), Cervello.Uscita {
     }
 
     // ---------- ASPETTO ----------
-    private fun mostraAspetto() {
+    private fun mostraAspetto() = mostraPersonalizza("aspetto")
+
+    @Suppress("unused")
+    private fun mostraAspettoClassico() {
         val pagina = Pagina("Aspetto")
         pagina.titoloSezione("Colori")
         val colori = pagina.scelta(Tema.PALETTE.map { it.id to it.nome }, tema.id)
@@ -2934,31 +3083,267 @@ class MainActivity : Activity(), Cervello.Uscita {
         testo.append(riassunto.ifBlank { "Ancora vuoto: si crea quando la conversazione diventa lunga." }).append("\n")
         testo.append("\nDIARIO\n$richieste richieste salvate sul telefono.")
 
-        val vista = TextView(this).apply {
-            text = testo
-            setPadding(dp(20), dp(8), dp(20), dp(8))
-            setTextIsSelectable(true)
-        }
-        val contenuto = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            addView(Button(this@MainActivity).apply {
-                text = "Cronologia delle richieste"
-                isAllCaps = false
-                setOnClickListener { mostraCronologia() }
+        val contenuto = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        fun titolo(t: String) = contenuto.addView(testoHud(t, COLORE_ORO, 11f, 0.18f).apply { setPadding(0, dp(14), 0, dp(4)) })
+        fun riga(t: String, modifica: (() -> Unit)?, togli: () -> Unit) {
+            val r = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+            r.addView(TextView(this).apply { text = t; textSize = 14f; setTextColor(COLORE_BIANCO); setPadding(0, dp(6), 0, dp(6)) },
+                LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            if (modifica != null) r.addView(testoHud("✎", COLORE_ORO, 16f, 0f).apply {
+                setPadding(dp(12), dp(8), dp(8), dp(8)); contentDescription = "Modifica"; setOnClickListener { modifica() }
             })
-            addView(vista)
+            r.addView(testoHud("✕", COLORE_TENUE, 16f, 0f).apply {
+                setPadding(dp(12), dp(8), dp(4), dp(8)); contentDescription = "Dimentica"; setOnClickListener { togli() }
+            })
+            contenuto.addView(r)
         }
+        var foglio: Foglio? = null
+        fun riapri() { foglio?.chiudi(); reattore.postDelayed({ mostraMemoria() }, 220) }
 
-        AlertDialog.Builder(this)
-            .setTitle("Memoria di ${Nome.attuale}")
-            .setView(ScrollView(this).apply { addView(contenuto) })
-            .setPositiveButton("Chiudi", null)
-            .setNeutralButton("Nuova conversazione") { _, _ ->
-                Thread { cervello.nuovaConversazione() }.start()
-                aggiungiAlRegistro("Jarvis", "Ok, ricominciamo da capo. I ricordi restano.")
+        titolo("COSA SO DI TE · ${ricordi.size}")
+        if (ricordi.isEmpty()) contenuto.addView(TextView(this).apply { text = "Ancora niente."; setTextColor(COLORE_TENUE) })
+        ricordi.forEachIndexed { i, r ->
+            riga("• $r", modifica = {
+                val campo = EditText(this).apply { setText(r); setTextColor(COLORE_BIANCO) }
+                AlertDialog.Builder(this).setTitle("Correggi il ricordo").setView(campo)
+                    .setPositiveButton("Salva") { _, _ ->
+                        val l = cervello.leggiLista("memoria")
+                        if (i < l.size) { l[i] = campo.text.toString().trim(); cervello.salvaLista("memoria", l.filter { it.isNotBlank() }) }
+                        riapri()
+                    }.setNegativeButton("Annulla", null).show()
+            }, togli = {
+                val l = cervello.leggiLista("memoria")
+                if (i < l.size) { l.removeAt(i); cervello.salvaLista("memoria", l) }
+                riapri()
+            })
+        }
+        val nuovo = EditText(this).apply {
+            hint = "Aggiungi qualcosa che deve sapere di te"
+            setHintTextColor(COLORE_TENUE)
+            setTextColor(COLORE_BIANCO)
+            setSingleLine(true)
+            imeOptions = EditorInfo.IME_ACTION_DONE
+            setOnEditorActionListener { v, _, _ ->
+                val t = v.text.toString().trim()
+                if (t.isNotEmpty()) { cervello.salvaLista("memoria", cervello.leggiLista("memoria") + t); riapri() }
+                true
             }
-            .setNegativeButton("Cancella tutto") { _, _ -> confermaCancellaTutto() }
-            .show()
+        }
+        contenuto.addView(nuovo)
+        titolo("LEZIONI IMPARATE · ${lezioni.size}")
+        lezioni.forEachIndexed { i, l ->
+            riga("• $l", modifica = null, togli = {
+                val x = cervello.leggiLista("lezioni")
+                if (i < x.size) { x.removeAt(i); cervello.salvaLista("lezioni", x) }
+                riapri()
+            })
+        }
+        contenuto.addView(TextView(this).apply {
+            text = testo.toString().substringAfter("\nROUTINE\n").let { "ROUTINE\n$it" }
+            textSize = 13f
+            setTextColor(COLORE_TENUE)
+            setPadding(0, dp(14), 0, dp(8))
+            setTextIsSelectable(true)
+        })
+        fun bottone(t: String, azione: () -> Unit) = contenuto.addView(Button(this).apply {
+            text = t; isAllCaps = false; setOnClickListener { azione() }
+        })
+        bottone("Cronologia delle richieste") { mostraCronologia() }
+        bottone("Nuova conversazione (i ricordi restano)") {
+            Thread { cervello.nuovaConversazione() }.start()
+            aggiungiAlRegistro("Jarvis", "Ok, ricominciamo da capo. I ricordi restano.")
+            foglio?.chiudi()
+        }
+        bottone("Cancella tutta la memoria…") { confermaCancellaTutto() }
+        foglio = Foglio("Memoria di ${Nome.attuale}", contenuto, false).also { it.mostra() }
+    }
+
+    // ================================================================
+    //  CHAT: tutta la conversazione, da scorrere, con il campo per scrivere
+    // ================================================================
+
+    private var alNuovoMessaggio: (() -> Unit)? = null
+
+    private fun mostraChat() {
+        chiudiMenuRadiale()
+        val contenuto = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val bolle = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        contenuto.addView(Button(this).apply {
+            text = "Conversazioni dei giorni scorsi"
+            isAllCaps = false
+            setOnClickListener { mostraCronologia() }
+        })
+        contenuto.addView(bolle)
+        fun riempi() {
+            bolle.removeAllViews()
+            val elenco = cronologiaSessione.filter { it.first == "Tu" || it.first !in listOf("Memoria", "Fonti", "Trofeo") }
+            if (elenco.isEmpty()) bolle.addView(TextView(this).apply {
+                text = "Ancora niente oggi. Scrivi qui sotto o parla con la sfera."
+                setTextColor(COLORE_TENUE); setPadding(0, dp(16), 0, dp(16))
+            })
+            for ((chi, t) in elenco.takeLast(80)) {
+                val mio = chi == "Tu"
+                bolle.addView(TextView(this).apply {
+                    text = t
+                    textSize = 15f * scalaTesto()
+                    setTextIsSelectable(true)
+                    setTextColor(if (mio) tema.sfondo else COLORE_BIANCO)
+                    setPadding(dp(14), dp(10), dp(14), dp(10))
+                    background = GradientDrawable().apply {
+                        cornerRadius = dp(18).toFloat()
+                        if (mio) setColor(tema.accento) else { setColor(Tema.conAlfa(tema.accento, 28)); setStroke(dp(1), Tema.conAlfa(tema.accento, 70)) }
+                    }
+                }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+                    gravity = if (mio) Gravity.END else Gravity.START
+                    topMargin = dp(8)
+                    if (mio) marginStart = dp(48) else marginEnd = dp(32)
+                })
+            }
+            (contenuto.parent as? ScrollView)?.let { sc -> sc.post { sc.fullScroll(View.FOCUS_DOWN) } }
+        }
+        val riga = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, dp(12), 0, 0)
+        }
+        val campo = EditText(this).apply {
+            hint = "Scrivi a ${Nome.attuale}…"
+            setHintTextColor(COLORE_TENUE)
+            setTextColor(COLORE_BIANCO)
+            setSingleLine(true)
+            imeOptions = EditorInfo.IME_ACTION_SEND
+        }
+        fun invia() {
+            val t = campo.text.toString().trim()
+            if (t.isEmpty()) return
+            campo.setText("")
+            gestisciRichiesta(t)
+        }
+        campo.setOnEditorActionListener { _, azione, _ -> if (azione == EditorInfo.IME_ACTION_SEND) { invia(); true } else false }
+        riga.addView(campo, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        riga.addView(testoHud("INVIA", COLORE_ORO, 12f, 0.2f).apply { setPadding(dp(12), dp(12), dp(4), dp(12)); setOnClickListener { invia() } })
+        contenuto.addView(riga)
+        riempi()
+        val f = Foglio("Chat", contenuto, false)
+        alNuovoMessaggio = { contenuto.post { riempi() } }
+        f.alChiudere = { alNuovoMessaggio = null }
+        f.mostra()
+    }
+
+    // ================================================================
+    //  CONFIGURAZIONE GUIDATA: cinque passi al primo avvio
+    // ================================================================
+
+    private fun mostraConfigurazione(passo: Int = 0) {
+        chiudiMenuRadiale()
+        val c = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        fun titolo(t: String) = c.addView(TextView(this).apply {
+            text = t; textSize = 22f; setTextColor(COLORE_BIANCO); typeface = Typeface.DEFAULT_BOLD; setPadding(0, dp(6), 0, dp(6))
+        })
+        fun nota(t: String) = c.addView(TextView(this).apply { text = t; textSize = 14.5f; setTextColor(COLORE_TENUE); setPadding(0, dp(4), 0, dp(8)) })
+        fun bottone(t: String, pieno: Boolean = false, azione: () -> Unit) = c.addView(testoHud(t, if (pieno) tema.sfondo else COLORE_BIANCO, 12.5f, 0.12f).apply {
+            gravity = Gravity.CENTER
+            setPadding(dp(12), dp(14), dp(12), dp(14))
+            background = GradientDrawable().apply {
+                cornerRadius = dp(24).toFloat()
+                if (pieno) setColor(tema.accento) else setStroke(dp(1), Tema.conAlfa(tema.accento, 150))
+            }
+            setOnClickListener { azione() }
+        }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(10) })
+        c.addView(testoHud("PASSO ${passo + 1} DI 5", COLORE_ORO, 11f, 0.2f))
+        var foglio: Foglio? = null
+        fun vai(n: Int) { foglio?.chiudi(); reattore.postDelayed({ if (n < 5) mostraConfigurazione(n) else fineConfigurazione() }, 230) }
+        when (passo) {
+            0 -> {
+                titolo("Benvenuto in ${Nome.attuale}")
+                nota("Per conversare usa Gemini di Google, gratis. Serve una chiave: tocca il pulsante, accedi con Google, " +
+                    "premi «Crea chiave API», copiala e incollala qui sotto. Senza chiave funzionano lo stesso i comandi base e i giochi offline.")
+                bottone("Apri la pagina della chiave (gratis)") { apriImpostazione(Intent(Intent.ACTION_VIEW, Uri.parse("https://aistudio.google.com/apikey"))) }
+                val chiave = EditText(this).apply {
+                    hint = "Incolla qui la chiave"
+                    setHintTextColor(COLORE_TENUE); setTextColor(COLORE_BIANCO); setSingleLine(true)
+                    inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+                    setText(Cassaforte.leggi(prefs, "api_key"))
+                }
+                c.addView(chiave)
+                bottone("Avanti", true) {
+                    val k = chiave.text.toString().trim()
+                    if (k.isNotEmpty()) prefs.edit().putString("fornitore", "gemini").let { Cassaforte.scrivi(it, "api_key", k) }.apply()
+                    vai(1)
+                }
+            }
+            1 -> {
+                titolo("Come lo vuoi chiamare?")
+                nota("Una parola sola: sarà anche la parola per chiamarlo («Ehi …»). Puoi cambiarla quando vuoi in ASPETTO › NOME.")
+                val campo = EditText(this).apply {
+                    setText(Nome.attuale); textSize = 20f; setTextColor(COLORE_BIANCO); setSingleLine(true)
+                    inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_WORDS
+                }
+                c.addView(campo)
+                bottone("Avanti", true) { cambiaNome(campo.text.toString()); vai(2) }
+            }
+            2 -> {
+                titolo("Che voce preferisci?")
+                nota("Le voci neurali sono più naturali: si scaricano una volta (circa 20 MB) e poi funzionano senza internet.")
+                val voci = listOf("telefono" to "Voce del telefono") + VoceNeurale.VOCI.map { it.nome.substringBefore(":").lowercase(Locale.ITALIAN) to it.nome }
+                val gruppo = RadioGroup(this)
+                val bottoni = voci.map { (_, t) -> RadioButton(this).apply { text = t; id = View.generateViewId(); setTextColor(COLORE_BIANCO) } }
+                bottoni.forEach { gruppo.addView(it) }
+                gruppo.check(bottoni[if (prefs.getString("motore_voce", "android") == "neurale") 1 else 0].id)
+                c.addView(gruppo)
+                fun scelta() = voci[bottoni.indexOfFirst { it.id == gruppo.checkedRadioButtonId }.coerceAtLeast(0)].first
+                fun applica(dopo: () -> Unit) {
+                    val v = scelta()
+                    if (v == "telefono") { prefs.edit().putString("motore_voce", "android").apply(); dopo(); return }
+                    Toast.makeText(this, "Preparo la voce, un attimo…", Toast.LENGTH_SHORT).show()
+                    Thread {
+                        val esito = try { Voce.cambia(this, prefs, v, "", "") } catch (e: Exception) { "" }
+                        runOnUiThread { if (esito.isNotBlank()) Toast.makeText(this, esito, Toast.LENGTH_LONG).show(); dopo() }
+                    }.start()
+                }
+                bottone("Ascolta") { applica { parla("Ciao, sono ${Nome.attuale}. Ti piace questa voce?") } }
+                bottone("Avanti", true) { applica { vai(3) } }
+            }
+            3 -> {
+                titolo("Permessi")
+                nota("Microfono per ascoltarti, notifiche per i promemoria, contatti per chiamare e scrivere, calendario per l'agenda, " +
+                    "posizione per meteo e promemoria sul posto. Android chiederà conferma per ognuno.")
+                bottone("Concedi i permessi") {
+                    val elenco = mutableListOf(Manifest.permission.RECORD_AUDIO, Manifest.permission.READ_CONTACTS,
+                        Manifest.permission.READ_CALENDAR, Manifest.permission.ACCESS_FINE_LOCATION)
+                    if (Build.VERSION.SDK_INT >= 33) elenco.add(Manifest.permission.POST_NOTIFICATIONS)
+                    requestPermissions(elenco.toTypedArray(), 77)
+                }
+                val sempre = CheckBox(this).apply {
+                    text = "Ascolta sempre «Ehi ${Nome.attuale}», anche a schermo spento"
+                    setTextColor(COLORE_BIANCO)
+                    isChecked = prefs.getBoolean("sempre_attivo", false)
+                }
+                c.addView(sempre)
+                bottone("Avanti", true) {
+                    if (sempre.isChecked && !ServizioJarvis.attivo) accendiSempreAttivo()
+                    vai(4)
+                }
+            }
+            else -> {
+                titolo("Proviamo!")
+                nota("Tocca il pulsante e di' «Ehi ${Nome.attuale}». Se non ti riconosce bene, torna indietro e scegli un altro nome, " +
+                    "meglio una parola italiana di 2 o 3 sillabe.")
+                bottone("Prova «Ehi ${Nome.attuale}»") { provaNome() }
+                bottone("Cambia nome") { vai(1) }
+                bottone("Fatto", true) { vai(5) }
+            }
+        }
+        if (passo > 0) bottone("Indietro") { vai(passo - 1) }
+        foglio = Foglio("Configurazione", c, false).also { it.mostra() }
+    }
+
+    private fun fineConfigurazione() {
+        prefs.edit().putBoolean("configurato", true).apply()
+        scriviInfoHud()
+        val r = "Tutto pronto. Tocca la sfera e parlami, oppure di' «Ehi ${Nome.attuale}»."
+        aggiungiAlRegistro("Jarvis", r)
+        parla(r)
     }
 
     private fun mostraCronologia() {
@@ -3110,7 +3495,6 @@ class MainActivity : Activity(), Cervello.Uscita {
         cervello.chiParla = ""
         parlatore.inizia()
         risposteParziale = StringBuilder()
-        if (Suoni.attivo(this, "suoni_pensa")) reattore.postDelayed(ticchettio, 450)
 
         Thread {
             // la risposta arriva a pezzi: Jarvis parla subito e i sottotitoli si scrivono man mano

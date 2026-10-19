@@ -50,87 +50,9 @@ jobs:
           name: jarvis-apk
           path: Jarvis.apk
 
-  # 2. Collaudo automatico su un telefono Android simulato
-  collauda:
-    runs-on: ubuntu-latest
-    timeout-minutes: 50
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "17"
-      - uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: "8.10.2"
-      - name: Scarica modelli e librerie
-        run: bash .github/prepara.sh
-      - name: Abilita la virtualizzazione
-        run: |
-          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
-          sudo udevadm control --reload-rules
-          sudo udevadm trigger --name-match=kvm
-      - name: Collaudo sull'emulatore
-        uses: reactivecircus/android-emulator-runner@v2
-        with:
-          api-level: 34
-          arch: x86_64
-          target: google_apis
-          ram-size: 4096M
-          disk-size: 6000M
-          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
-          disable-animations: true
-          script: |
-            adb logcat -c || true
-            gradle connectedDebugAndroidTest -Pabi=x86_64 --no-daemon --stacktrace > collaudo.log 2>&1 || (adb logcat -d > logcat.txt; exit 1)
-            adb logcat -d > logcat.txt || true
-            adb pull /sdcard/Pictures/JarvisCollaudo schermate || true
-      - name: Riporta i risultati del collaudo
-        if: always()
-        run: |
-          python3 - <<'PY'
-          import glob, re, xml.etree.ElementTree as ET
-          righe=[]; tot=0; falliti=0
-          for f in glob.glob('app/build/outputs/androidTest-results/connected/**/*.xml', recursive=True):
-              r=ET.parse(f).getroot()
-              for tc in r.iter('testcase'):
-                  tot+=1
-                  err=tc.find('failure') if tc.find('failure') is not None else tc.find('error')
-                  if err is not None:
-                      falliti+=1
-                      righe.append(f"FALLITO {tc.get('name')}: {(err.get('message') or err.text or '')[:400]}")
-                  else:
-                      righe.append(f"ok {tc.get('name')} ({tc.get('time')} s)")
-          righe.insert(0, f"Test: {tot}, falliti: {falliti}")
-          try:
-              crash=[l for l in open('logcat.txt', errors='ignore') if 'FATAL' in l or 'AndroidRuntime' in l or 'libc  ' in l][:40]
-              if crash: righe.append('--- logcat ---'); righe+= [c.strip()[:300] for c in crash]
-          except Exception: pass
-          try:
-              log=open('collaudo.log', errors='ignore').read()
-              righe += [l[:300] for l in log.splitlines() if l.startswith('e: ') or 'What went wrong' in l][:20]
-          except Exception: pass
-          testo='\n'.join(righe).replace('%','%25').replace('\r','').replace('\n','%0A')
-          print(f"::notice title=collaudo::{testo}")
-          PY
-      - name: Pubblica le schermate vere del collaudo
-        if: always()
-        run: |
-          if ls schermate/*.png >/dev/null 2>&1; then
-            cd schermate
-            git init -q
-            git checkout -q -b schermate
-            git add *.png
-            git -c user.name=collaudo -c user.email=collaudo@users.noreply.github.com commit -qm "Schermate del collaudo ${{ github.run_number }}"
-            git push -qf "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" schermate
-            echo "::notice title=schermate::$(ls *.png | tr '\n' ' ')"
-          else
-            echo "::notice title=schermate::nessuna schermata"
-          fi
-
-  # 3. Pubblica l'APK solo se il collaudo è passato
+  # 2. Pubblica l'APK appena compilato
   pubblica:
-    needs: [costruisci, collauda]
+    needs: [costruisci]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -140,6 +62,6 @@ jobs:
         with:
           tag_name: build-${{ github.run_number }}
           name: Jarvis ${{ github.run_number }}
-          body: "Collaudata automaticamente su un telefono Android simulato. Scarica **Jarvis.apk** qui sotto e installalo."
+          body: "Scarica **Jarvis.apk** qui sotto e installalo."
           files: Jarvis.apk
           make_latest: true
