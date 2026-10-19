@@ -48,7 +48,14 @@ object Tema {
 
     /** Forme del cuore animato. */
     val FORME = listOf(
-        "nucleo3d" to "Nucleo 3D: sfera di energia con profondità, riflessi e anello in orbita",
+        "3d_nucleo" to "3D · Nucleo: sfera di energia con anello in orbita",
+        "3d_sole" to "3D · Sole: stella di plasma con la corona",
+        "3d_pianeta" to "3D · Pianeta: continenti, nuvole e anelli",
+        "3d_cristallo" to "3D · Cristallo: gemma sfaccettata che ruota",
+        "3d_ologramma" to "3D · Ologramma: globo a reticolo",
+        "3d_liquido" to "3D · Oro liquido: gocce di metallo che si fondono",
+        "3d_atomo" to "3D · Atomo: elettroni in orbita",
+        "3d_buconero" to "3D · Buco nero: disco di luce attorno al buio",
         "sfera" to "Sfera luminosa",
         "anelli" to "Nucleo ad anelli",
         "onda" to "Onda vocale: barre che danzano con la voce",

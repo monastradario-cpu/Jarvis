@@ -201,9 +201,10 @@ class MainActivity : Activity(), Cervello.Uscita {
         // Una volta sola: il nuovo Nucleo 3D diventa la forma del cuore (si torna indietro da ASPETTO)
         if (!prefs.getBoolean("nucleo3d_proposto", false)) {
             val e = prefs.edit().putBoolean("nucleo3d_proposto", true)
-            if (Build.VERSION.SDK_INT >= 33 && Nucleo3D.disponibile) e.putString("forma", "nucleo3d")
+            if (Build.VERSION.SDK_INT >= 33 && Grafica3D.disponibile) e.putString("forma", "3d_nucleo")
             e.apply()
         }
+        if (prefs.getString("forma", "") == "nucleo3d") prefs.edit().putString("forma", "3d_nucleo").apply()
         window.statusBarColor = tema.sfondo
         window.navigationBarColor = tema.sfondo
         costruisciInterfaccia()
@@ -667,6 +668,13 @@ class MainActivity : Activity(), Cervello.Uscita {
         r.luminosita = prefs.getFloat("r_luminosita", 1f)
         r.spessore = prefs.getFloat("r_spessore", 1f)
         r.tacche = prefs.getBoolean("r_tacche", true)
+        applica3D(r)
+    }
+
+    private fun applica3D(r: ReattoreView) {
+        r.alone3D = prefs.getInt("3d_alone", 100) / 100f
+        r.velocita3D = prefs.getInt("3d_velocita", 100) / 100f
+        r.dimensione3D = prefs.getInt("3d_dimensione", 125) / 100f
     }
 
     /** Riga di dati in alto: data, ora, batteria, plugin attivi e ricordi. */
@@ -1229,25 +1237,68 @@ class MainActivity : Activity(), Cervello.Uscita {
     //  PERSONALIZZA: pannello con prova dal vivo
     // ================================================================
 
-    private fun mostraPersonalizza(scheda: String = "nome") {
+    private fun mostraPersonalizza(scheda: String = "nome", confermato: Map<String, Any?>? = null, altezzaFissa: Int = 0) {
         chiudiMenuRadiale()
         if (pannello != null) {
             pannello?.mostraScheda(scheda)
             return
         }
-        val altezza = (fondo.height * 0.6f).toInt().coerceAtLeast(dp(340))
+        val altezza = if (altezzaFissa > 0) altezzaFissa else (fondo.height * 0.6f).toInt().coerceAtLeast(dp(340))
         val p = PannelloPersonalizza(this, prefs, tema, altezza,
-            aggiorna = { aggiornaPersonalizzazione() },
+            aggiorna = { aggiornaTuttoDalVivo() },
+            anteprimaColore = { reattore.palette = Tema.attuale(prefs) },
             scegliFoto = { scegliFotoSfondo() },
             cambiaNome = { nome -> cambiaNome(nome) },
             provaNome = { provaNome() },
             alChiudere = {
                 pannello?.let { fondo.removeView(it.vista) }
                 pannello = null
-            })
+            },
+            confermatoIniziale = confermato)
         pannello = p
         fondo.addView(p.vista, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, altezza, Gravity.BOTTOM))
         p.mostraScheda(scheda)
+    }
+
+    /** Applica le scelte di PERSONALIZZA; se è cambiato il colore, ricolora tutta l'app subito. */
+    private fun aggiornaTuttoDalVivo() {
+        val nuovo = Tema.attuale(prefs)
+        if (nuovo.accento != tema.accento || nuovo.sfondo != tema.sfondo || nuovo.testo != tema.testo) {
+            ricostruisciConTema()
+        } else {
+            applicaRegolazioni(reattore)
+            aggiornaPersonalizzazione()
+        }
+    }
+
+    /**
+     * Ricostruisce la schermata con i colori del tema attuale, senza riavviare l'app:
+     * la conversazione, il testo scritto e il pannello aperto restano dove sono.
+     */
+    private fun ricostruisciConTema() {
+        chiudiMenuRadiale()
+        if (editor != null) chiudiEditor(false, ricarica = false)
+        barraAnteprima?.let { (it.parent as? android.view.ViewGroup)?.removeView(it) }
+        barraAnteprima = null
+        // il pannello aperto si ricrea con i colori nuovi, sulla stessa scheda e con la stessa prova in corso
+        val vecchio = pannello
+        val altezzaPannello = vecchio?.vista?.layoutParams?.height ?: 0
+        vecchio?.vista?.let { (it.parent as? android.view.ViewGroup)?.removeView(it) }
+        pannello = null
+        val scritto = campoTesto.text.toString()
+        reattore.removeCallbacks(aggiornaHud)
+        reattore.removeCallbacks(ticchettio)
+        tema = Tema.attuale(prefs)
+        window.statusBarColor = tema.sfondo
+        window.navigationBarColor = tema.sfondo
+        fotoCaricata = ""
+        costruisciInterfaccia()
+        campoTesto.setText(scritto)
+        if (vecchio != null) mostraPersonalizza(vecchio.schedaAttuale, vecchio.confermatoAttuale, altezzaPannello)
+        aggiornaVistaAllegati()
+        ridisegnaConversazione()
+        aggiornaMic()
+        if (visibile) reattore.post(aggiornaHud)
     }
 
     /** Il nuovo nome: titolo, parola di attivazione, widget. Si resta sulla pagina. */

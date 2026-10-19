@@ -172,7 +172,8 @@ object Personalizza {
         "pulsanti", "pulsanti_miei",
         "sfondo", "sfondo_oscura", "sfondo_sfoca", "sfondo_giornaliero",
         "suono_sveglia", "vibrazione_sveglia", "suoni_volume",
-        "suoni_fine", "suoni_conferma", "suoni_pensa", "suoni_trofeo", "suoni_notte"
+        "suoni_fine", "suoni_conferma", "suoni_pensa", "suoni_trofeo", "suoni_notte",
+        "forma", "3d_alone", "3d_velocita", "3d_dimensione", "tema", "r_tonalita"
     )
 
     /** Fotografia delle scelte attuali, per poterle ripristinare se la prova non piace. */

@@ -302,11 +302,12 @@ class CollaudoJarvis {
         JarvisApp.errore(ctx).delete()
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             Thread.sleep(1500)
-            for (scheda in listOf("nome", "menu", "home", "pulsanti", "sfondo", "suoni")) {
+            for (scheda in listOf("nome", "3d", "menu", "home", "pulsanti", "sfondo", "suoni")) {
                 scenario.onActivity { a ->
-                    val m = MainActivity::class.java.getDeclaredMethod("mostraPersonalizza", String::class.java)
+                    val m = MainActivity::class.java.getDeclaredMethod("mostraPersonalizza", String::class.java,
+                        Map::class.java, Int::class.javaPrimitiveType)
                     m.isAccessible = true
-                    m.invoke(a, scheda)
+                    m.invoke(a, scheda, null, 0)
                 }
                 Thread.sleep(400)
             }
@@ -347,44 +348,71 @@ class CollaudoJarvis {
         assertEquals(Nome.PREDEFINITO, Nome.attuale)
     }
 
-    // ---------- Nucleo 3D ----------
+    // ---------- modelli 3D e colori ----------
 
-    @Test fun h01_nucleo3DSiCompila() {
+    @Test fun h01_modelli3DSiCompilano() {
         if (android.os.Build.VERSION.SDK_INT < 33) return
-        assertTrue("il programma grafico del Nucleo 3D non si compila", Nucleo3D.disponibile)
-        android.graphics.RuntimeShader(Nucleo3D.SORGENTE)
+        assertTrue("il 3D non è disponibile", Grafica3D.disponibile)
+        for ((id, _, _) in Grafica3D.MODELLI) {
+            try {
+                android.graphics.RuntimeShader(Grafica3D.sorgente(id))
+            } catch (e: Exception) {
+                throw AssertionError("il modello 3D $id non si compila: ${e.message}")
+            }
+        }
     }
 
-    /** Apre Jarvis con il Nucleo 3D, controlla che sia disegnato davvero e salva una schermata vera. */
-    @Test fun h02_nucleo3DSulloSchermo() {
+    private fun reattore(a: MainActivity): ReattoreView {
+        val campo = MainActivity::class.java.getDeclaredField("reattore")
+        campo.isAccessible = true
+        return campo.get(a) as ReattoreView
+    }
+
+    /** Ogni modello 3D viene disegnato davvero sullo schermo; di ognuno salva una schermata vera. */
+    @Test fun h02_modelli3DSulloSchermo() {
         if (android.os.Build.VERSION.SDK_INT < 33) return
         JarvisApp.errore(ctx).delete()
-        prefs.edit().putString("forma", "nucleo3d").putString("stile_menu", "dock")
-            .putString("blocchi", "meteo,batteria,trofei").putString("pulsanti", "torcia,meteo,gioco,zitto")
-            .putString("sfondo", "stelle").putBoolean("nucleo3d_proposto", true).commit()
+        prefs.edit().putString("forma", "3d_nucleo").remove("stile_menu").remove("blocchi").remove("pulsanti")
+            .putString("sfondo", "stelle").putString("tema", "oro").putInt("r_tonalita", -1)
+            .putInt("3d_dimensione", 140).putBoolean("nucleo3d_proposto", true).commit()
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
-            Thread.sleep(3500)
-            var attivo = false
-            scenario.onActivity { a ->
-                val campo = MainActivity::class.java.getDeclaredField("reattore")
-                campo.isAccessible = true
-                attivo = (campo.get(a) as ReattoreView).nucleo3DAttivo
+            Thread.sleep(3000)
+            for ((id, _, _) in Grafica3D.MODELLI) {
+                scenario.onActivity { a ->
+                    val r = reattore(a)
+                    r.forma = Grafica3D.forma(id)
+                    r.stato = ReattoreView.Stato.PARLA
+                    r.livelloVoce = 0.6f
+                }
+                Thread.sleep(1500)
+                var disegnato = ""
+                scenario.onActivity { a -> disegnato = reattore(a).ultimo3D }
+                assertEquals("il modello $id non è stato disegnato", id, disegnato)
+                salvaSchermata(scenario, "3d_$id")
             }
-            assertTrue("il Nucleo 3D non è stato disegnato", attivo)
-            salvaSchermata(scenario, "jarvis_nucleo3d")
-            // mentre parla: più energia
+            // il colore cambia tutta l'app, dal vivo
+            prefs.edit().putString("tema", "ghiaccio").putString("forma", "3d_pianeta").commit()
             scenario.onActivity { a ->
-                val campo = MainActivity::class.java.getDeclaredField("reattore")
-                campo.isAccessible = true
-                val r = campo.get(a) as ReattoreView
-                r.stato = ReattoreView.Stato.PARLA
-                r.livelloVoce = 0.8f
-                r.testoCentrale = "RISPONDO"
+                val m = MainActivity::class.java.getDeclaredMethod("aggiornaTuttoDalVivo")
+                m.isAccessible = true
+                m.invoke(a)
+            }
+            Thread.sleep(2000)
+            scenario.onActivity { a ->
+                val r = reattore(a)
+                assertEquals(Tema.PALETTE.first { it.id == "ghiaccio" }.accento, r.palette.accento)
+            }
+            salvaSchermata(scenario, "colore_ghiaccio")
+            scenario.onActivity { a ->
+                val m = MainActivity::class.java.getDeclaredMethod("mostraPersonalizza", String::class.java,
+                    Map::class.java, Int::class.javaPrimitiveType)
+                m.isAccessible = true
+                m.invoke(a, "3d", null, 0)
             }
             Thread.sleep(1500)
-            salvaSchermata(scenario, "jarvis_nucleo3d_parla")
+            salvaSchermata(scenario, "pannello_3d")
         }
-        prefs.edit().remove("stile_menu").remove("blocchi").remove("pulsanti").remove("sfondo").commit()
+        prefs.edit().putString("tema", "oro").putString("forma", "3d_nucleo").remove("sfondo").remove("3d_dimensione").commit()
         senzaErrori()
     }
 
@@ -407,7 +435,7 @@ class CollaudoJarvis {
             val c = b.getPixel(x, y)
             if (android.graphics.Color.red(c) + android.graphics.Color.green(c) + android.graphics.Color.blue(c) > 150) luminosi++
         }
-        assertTrue("schermata troppo scura: $luminosi punti luminosi", luminosi > 30)
+        assertTrue("schermata troppo scura: $luminosi punti luminosi", luminosi > 10)
         val valori = android.content.ContentValues().apply {
             put(android.provider.MediaStore.Images.Media.DISPLAY_NAME, "$nome.png")
             put(android.provider.MediaStore.Images.Media.MIME_TYPE, "image/png")

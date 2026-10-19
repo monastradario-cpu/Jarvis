@@ -7,6 +7,7 @@ import android.graphics.drawable.GradientDrawable
 import android.text.InputType
 import android.view.Gravity
 import android.view.View
+import android.view.inputmethod.EditorInfo
 import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.FrameLayout
@@ -31,18 +32,24 @@ class PannelloPersonalizza(
     private val tema: Tema.Palette,
     private val altezzaAperto: Int,
     private val aggiorna: () -> Unit,
+    private val anteprimaColore: () -> Unit,
     private val scegliFoto: () -> Unit,
     private val cambiaNome: (String) -> String,
     private val provaNome: () -> Unit,
-    private val alChiudere: () -> Unit
+    private val alChiudere: () -> Unit,
+    confermatoIniziale: Map<String, Any?>? = null
 ) {
 
-    val SCHEDE = listOf("nome" to "NOME", "menu" to "MENÙ", "home" to "HOME", "pulsanti" to "PULSANTI", "sfondo" to "SFONDO", "suoni" to "SUONI")
+    val SCHEDE = listOf("nome" to "NOME", "3d" to "3D E COLORI", "menu" to "MENÙ", "home" to "HOME", "pulsanti" to "PULSANTI", "sfondo" to "SFONDO", "suoni" to "SUONI")
 
     private fun dp(v: Int) = (v * a.resources.displayMetrics.density).toInt()
 
-    private var confermato = Personalizza.istantanea(prefs)
+    private var confermato = confermatoIniziale ?: Personalizza.istantanea(prefs)
     private var scheda = "nome"
+
+    /** Per ricreare il pannello con i nuovi colori senza perdere la prova in corso. */
+    val schedaAttuale get() = scheda
+    val confermatoAttuale get() = confermato
     private var ridotto = false
 
     val vista = LinearLayout(a).apply {
@@ -101,6 +108,7 @@ class PannelloPersonalizza(
     fun haModifiche() = Personalizza.istantanea(prefs) != confermato
 
     private fun conferma() {
+        campoNome?.let { c -> if (Nome.normalizza(c.text.toString()) != Nome.attuale) usaNome() }
         confermato = Personalizza.istantanea(prefs)
         stato.text = "Salvato ✓  Resti qui: puoi continuare a cambiare."
         stato.setTextColor(tema.accento)
@@ -171,8 +179,10 @@ class PannelloPersonalizza(
             })
         }
         contenuto.removeAllViews()
+        campoNome = null
         when (scheda) {
             "nome" -> schedaNome()
+            "3d" -> scheda3D()
             "menu" -> schedaMenu()
             "home" -> schedaHome()
             "pulsanti" -> schedaPulsanti()
@@ -187,22 +197,113 @@ class PannelloPersonalizza(
         nota("Scegli il nome che vuoi: comparirà in alto, nelle notifiche e nel widget, e sarà la parola per chiamarlo " +
             "(«Ehi ${Nome.attuale}»). Una sola parola. Meglio una parola italiana vera, di 2 o 3 sillabe, che non si dice spesso: " +
             "così il riconoscimento offline la capisce bene e non si attiva per sbaglio.")
-        val campo = campo("Nome").apply { setText(Nome.attuale) }
-        bottone("Usa questo nome") {
-            val n = cambiaNome(campo.text.toString())
-            campo.setText(n)
-            stato.text = "Da ora mi chiamo $n ✓  Per chiamarmi: «Ehi $n»."
-            stato.setTextColor(tema.accento)
+        val riga = LinearLayout(a).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        val campo = EditText(a).apply {
+            hint = "Nome"
+            setHintTextColor(tema.tenue)
+            setTextColor(tema.testo)
+            textSize = 18f
+            setSingleLine(true)
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_WORDS
+            imeOptions = EditorInfo.IME_ACTION_DONE
+            setText(Nome.attuale)
+            setOnEditorActionListener { _, azione, _ ->
+                if (azione == EditorInfo.IME_ACTION_DONE) { usaNome(); true } else false
+            }
         }
+        campoNome = campo
+        riga.addView(campo, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        riga.addView(pulsante("USA", true) { usaNome() }, LinearLayout.LayoutParams(dp(72), dp(44)).apply { marginStart = dp(8) })
+        contenuto.addView(riga)
+        nota("Tocca USA, il tasto Fine della tastiera oppure CONFERMA in basso.")
         bottone("Prova il nome a voce (parla per 5 secondi)") {
-            val n = cambiaNome(campo.text.toString())
-            campo.setText(n)
+            usaNome()
             provaNome()
         }
         titolo("Idee")
         nota("Di serie si chiama ${Nome.PREDEFINITO}: Assistente Tuttofare, Leale, Attento, Sempre presente. " +
             "Altre idee: Orion, Elias, Victor… oppure il nome che preferisci. " +
             "Sotto l'icona del telefono resta «${Nome.PREDEFINITO}»: Android non permette di cambiarlo dall'app.")
+    }
+
+    private var campoNome: EditText? = null
+
+    /** Applica il nome scritto nel campo (se è cambiato). */
+    private fun usaNome() {
+        val campo = campoNome ?: return
+        val n = cambiaNome(campo.text.toString())
+        campo.setText(n)
+        campo.setSelection(n.length)
+        (a.getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as? android.view.inputmethod.InputMethodManager)
+            ?.hideSoftInputFromWindow(campo.windowToken, 0)
+        stato.text = "Da ora mi chiamo $n ✓  Per chiamarmi: «Ehi $n»."
+        stato.setTextColor(tema.accento)
+    }
+
+    private fun scheda3D() {
+        titolo("Modello 3D del cuore")
+        if (!Grafica3D.disponibile) {
+            nota("Il 3D ha bisogno di Android 13 o successivo: su questo telefono uso le forme classiche (ASPETTO).")
+        } else {
+            nota("Disegnati dalla scheda video: luce, riflessi e profondità veri. Reagiscono alla voce e agli umori.")
+            val attuale = prefs.getString("forma", "3d_nucleo") ?: "3d_nucleo"
+            val opzioni = Grafica3D.MODELLI.map { (id, nome, descrizione) -> Grafica3D.forma(id) to "$nome · $descrizione" } +
+                listOf("sfera" to "Nessun 3D: sfera classica")
+            scelta(opzioni, attuale) { v ->
+                prefs.edit().putString("forma", v).apply()
+                cambiato()
+            }
+            titolo("Regolazioni 3D")
+            cursore("Bagliore", 0, 200, prefs.getInt("3d_alone", 100), "%") { v ->
+                prefs.edit().putInt("3d_alone", v).apply(); aggiorna()
+            }
+            cursore("Velocità", 20, 300, prefs.getInt("3d_velocita", 100), "%") { v ->
+                prefs.edit().putInt("3d_velocita", v).apply(); aggiorna()
+            }
+            cursore("Dimensione", 70, 170, prefs.getInt("3d_dimensione", 125), "%") { v ->
+                prefs.edit().putInt("3d_dimensione", v).apply(); aggiorna()
+            }
+        }
+        titolo("Colore del nucleo e di tutta l'app")
+        nota("Il colore che scegli qui colora il nucleo e insieme tutta l'app: titoli, pulsanti, blocchi, menù.")
+        val riga = LinearLayout(a).apply { orientation = LinearLayout.HORIZONTAL }
+        val temaAttuale = prefs.getString("tema", "oro") ?: "oro"
+        for (p in Tema.PALETTE) {
+            val scelto = p.id == temaAttuale && prefs.getInt("r_tonalita", -1) < 0
+            val cella = LinearLayout(a).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER_HORIZONTAL
+                setPadding(dp(4), dp(4), dp(4), dp(4))
+                isClickable = true
+                contentDescription = p.nome
+                setOnClickListener {
+                    prefs.edit().putString("tema", p.id).putInt("r_tonalita", -1).apply()
+                    cambiato()
+                    mostraScheda("3d")
+                }
+            }
+            cella.addView(View(a).apply {
+                background = android.graphics.drawable.GradientDrawable().apply {
+                    shape = android.graphics.drawable.GradientDrawable.OVAL
+                    setColor(p.accento)
+                    setStroke(dp(if (scelto) 3 else 1), if (scelto) tema.testo else p.sfondo)
+                }
+            }, LinearLayout.LayoutParams(dp(40), dp(40)))
+            cella.addView(TextView(a).apply {
+                text = p.nome.split(" ").first()
+                textSize = 10f
+                setTextColor(if (scelto) tema.testo else tema.tenue)
+                gravity = Gravity.CENTER
+            })
+            riga.addView(cella, LinearLayout.LayoutParams(dp(64), LinearLayout.LayoutParams.WRAP_CONTENT))
+        }
+        contenuto.addView(HorizontalScrollView(a).apply { isHorizontalScrollBarEnabled = false; addView(riga) })
+        val tonalita = prefs.getInt("r_tonalita", -1)
+        cursore("Tonalità su misura (0 = colore del tema)", 0, 360, if (tonalita < 0) 0 else tonalita, "°",
+            allaFine = { cambiato() }) { v ->
+            prefs.edit().putInt("r_tonalita", if (v == 0) -1 else v).apply()
+            anteprimaColore()
+        }
     }
 
     private fun schedaMenu() {
