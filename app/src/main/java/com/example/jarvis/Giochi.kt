@@ -73,7 +73,9 @@ object Giochi {
 
     private val USCITA = Regex(
         "^(basta|stop|fine|esci|smettila|basta cosi)( (giocare|gioco|di giocare|con il gioco|col gioco))?$|" +
-            "basta giocare|fine del gioco|esci dal gioco|smetti(amo)? di giocare|non voglio piu giocare|chiudi il gioco|basta con (il|questo) gioco|finiamo il gioco"
+            "basta giocare|fine del gioco|esci dal gioco|smetti(amo)? di giocare|non voglio piu giocare|chiudi il gioco|basta con (il|questo) gioco|finiamo il gioco|" +
+            "non mi interessa|non m'interessa|non mi va|non voglio (piu )?(giocare|sentire|la storia|il gioco)|basta (con )?(la |questa |le )?(storia|storie|quiz|indovinell)|" +
+            "perche continui|smettila|smetti|lascia (stare|perdere)|non ho chiesto|non ti ho chiesto|non voglio giocare|cambiamo argomento|parliamo d'altro|parliamo di altro"
     )
 
     private val SI = Regex("^(si|certo|ok|okay|va bene|vai|dai|ancora|un altra|un'altra|un altro|un'altro|si dai|volentieri|perche no|esatto|giusto|pronto|fatto|si grazie)( .*)?$")
@@ -621,7 +623,8 @@ object Giochi {
         val scelta = when {
             Regex("^(1|uno|la prima|prima|la uno)\\b").containsMatchIn(t) -> "la scelta Uno"
             Regex("^(2|due|la seconda|seconda|la due)\\b").containsMatchIn(t) -> "la scelta Due"
-            else -> "questo: $t"
+            t.split(" ").size <= 10 && !Regex("\\b(non|perche|basta)\\b").containsMatchIn(t) -> "questo: $t"
+            else -> return "Per continuare la storia dimmi «uno» o «due». Se non ti va, di' «basta giocare»."
         }
         val passo = g.optInt("passo") + 1
         val finale = passo >= CAPITOLI - 1
